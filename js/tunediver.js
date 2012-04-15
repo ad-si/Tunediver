@@ -1,4 +1,4 @@
-(function (w, d, undefined) {
+(function (window, document, undefined) {
 
     var baseURL = "",
         audio,
@@ -96,7 +96,7 @@
             s = timeLeft % 60;
             m = parseInt(timeLeft / 60 % 60);
 
-            return (s < 10) ? (m + ':0' + s) : (m + ':' + s);
+            return (s < 10) ? ('- ' + m + ':0' + s) : ('- ' + m + ':' + s);
         }
 
         function timeElapsed() {
@@ -185,7 +185,7 @@
                          ['div#.handler']
                          ],*/
                     ],
-                    ['span#duration', '0:00'],
+                    ['span#duration', '- 0:00'],
                     ['button#queue'],
                     ['button#shuffle'],
                     ['button#repeat'],
@@ -445,7 +445,7 @@
             $('playSong').addEventListener('click', function () {
 
                 if (song.src != "")
-                    audio.src = song.src
+                    audio.src = song.src;
                 else {
                     throw new Error('No source available for the song ' + song.title);
                 }
@@ -521,7 +521,7 @@
                 }
 
                 DOMinate(
-                    [d.body,
+                    [document.body,
                         ['div#wrapper',
                             ['nav#nav',
                                 ['h1#logo', 'tunediver',
@@ -550,7 +550,7 @@
                 );
 
 
-                $('wrapper').addEventListener('click', function (e) {
+                $('wrapper').addEventListener('click', function () {
                     var bubbles = document.getElementsByClassName('bubble');
 
                     for (var a = 0; a < bubbles.length; a++) {
@@ -600,7 +600,7 @@
                 print.artist(dirs[0]);
             },
 
-            artists:function (dirs) {
+            artists:function () {
                 print.artists();
             },
 
