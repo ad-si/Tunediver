@@ -2,6 +2,8 @@
 
 $base: rgb(40,180,220)
 
+
+// Resets
 *
 	border: none
 	margin: 0
@@ -13,29 +15,21 @@ $base: rgb(40,180,220)
 html
 	height: 100%
 
+
+// Generic
+
+button
+	cursor: pointer
+
+
 body
-	font: 500 14px/16px "Arial", sans-serif
+	font: 500 13px/16px "Arial", sans-serif
 	color: rgb(200,200,200)
 	text-shadow: 0 -1px 0px black
 	height: 100%
 
-#logo
-	display: inline-block
-	color: $base
-	font-weight: 100
-	font: 100 24px/60px "Arial",sans-serif
-	vertical-align: top
-	margin: 0 20px 0 20px
-	text-shadow: 0 -1px 0px black
-	cursor: pointer
-	img
-		margin-left: 5px
-		height: 20px
-		width: 30px
-
 h3
 	margin: 20px 0 5px 0
-
 
 #wrapper
 	overflow: hidden
@@ -44,24 +38,64 @@ h3
 	background: rgb(50,50,50)
 	box-shadow: 0px 0px 10px rgba(0,0,0,1)
 
-pre
-	white-space: wrap
-
 #nav
 	width: 100%
-	+background-image(linear-gradient(rgb(80,80,80),rgb(30,30,30)))
+	+background-image(linear-gradient(rgba(0,0,0,0.2),rgba(0,0,0,0.6)), image-url('bg.jpg'))
 	border-bottom: 1px solid black
-	input[type="search"]
-		-webkit-appearance: textfield
+	line-height: 50px
+	vertical-align: top
+	color: rgb(140,140,140)
+	> *
 		display: inline-block
-		vertical-align: middle
-		float: right
-		font: 500 16px/28px "Arial",sans-serif
-		width: 200px
-		border-radius: 15px
-		box-shadow: inset 1px 1px 1px rgba(0,0,0,1)
-		margin: 6px 20px 0 0
+		line-height: 60px
+	button
+		color: inherit
+		background: transparent
+		text-shadow: 0px -1px 0 black
+		&:hover
+			color: $base
+		&:active
+			color: $base * 0.8
 
+#logo
+	color: $base
+	font-weight: 100
+	font-size: 24px
+	font-family: "Arial",sans-serif
+	margin: 0 20px 0 20px
+	text-shadow: 0 -1px 0px black
+	cursor: pointer
+	img
+		margin-left: 5px
+		height: 20px
+		width: 30px
+
+@import player
+
+#settings
+	background: transparent
+	position: absolute
+	right: 40px
+	&:before
+		content: '\2699'
+		font-size: 30px
+		height: 50px
+		width: 50p
+
+#settingsBubble
+	top: 72px
+	right: 10px
+	width: 200px
+	height: 200px
+	&:before
+		top: -24px
+		right: 28px
+	&:after
+		top: -20px
+		right: 30px
+
+
+// Menu Left
 
 #c1,
 #c2,
@@ -72,12 +106,13 @@ pre
 	height: 90%
 	border-left: 1px solid black
 	overflow-y: auto
+	overflow-x: hidden
 
 
 #c1
 	border-left: none
 	text-align: center
-	width: 15%
+	width: 160px
 	> button
 		color: white
 		text-align: left
@@ -87,8 +122,8 @@ pre
 		width: 100%
 		line-height: 40px
 		padding: 0 0 0 20px
-		border-bottom: 1px solid rgb(80,80,80)
-		border-top: 1px solid rgb(30,30,30)
+		border-top: 1px solid rgb(80,80,80)
+		border-bottom: 1px solid rgb(30,30,30)
 		cursor: pointer
 		text-shadow: 0 -1px 0 black
 		background-color: rgba(230,230,230,0)
@@ -97,19 +132,87 @@ pre
 		&:active
 			background-color: rgba(255,255,255,0.2)
 
-#c2,
+
+input[type="search"]
+	-webkit-appearance: textfield
+	font: 500 16px/28px "Arial",sans-serif
+	color: white
+	width: 140px
+	border-radius: 15px
+	box-shadow: inset 1px 1px 1px rgba(0,0,0,1)
+	background-color: rgb(100,100,100)
+	margin: 10px 0
+
+#interprets:before
+	content: '\265D'
+	margin-right: 5px
+
+#charts:before
+	content: '\2605'
+	margin-right: 5px
+
+#songs:before
+	content: '\266B'
+	margin-right: 5px
+
+#playlists:before
+	content: '\2665'
+	margin-right: 5px
+
+#info:before
+	font-size: 22px
+	content: '\2295'
+	margin-right: 5px
+
+
+
+
+// Artists, Songs
+#c2
+	padding: 10px 0 0 0
+	width: 160px
+
 #c3
 	padding: 10px 0 0 0
-	width: 15%
+	width: 200px
+
+.song
+	position: relative
+	height: 20px
+	line-height: 20px
+	white-space: nowrap
+	&:nth-of-type(2n)
+		background-color: rgba(0,0,0,0.06)
 	a
 		cursor: pointer
-		display: block
-		padding: 2px 20px
-	a:hover
-		background-color: rgba(0,0,0,0.05)
+		position: absolute
+		left: 20px
+	button
 		color: white
-	.highlight
-		background-color: rgba(0,0,0,0.1)
+		background: transparent
+		display: none
+		width: 20px
+	.play:before
+		content: "\25B6"
+		position: relative
+		left: 2px
+	.add:before
+		content: "+"
+		position: relative
+		left: 2px
+
+	&:hover,
+	&.highlight
+		+box-shadow(inset 0 0 20px 20px rgba($base, 0.2))
+		color: white
+		button
+			display: inline-block
+
+
+
+
+
+// Overview
 
 #c4
 	padding: 30px
@@ -119,6 +222,9 @@ pre
 		width: 80px
 		height: 80px
 		display: inline-block
+		border-radius: 3px
+		box-shadow: 0 1px 3px rgba(0,0,0,0.6)
+		background: image-url('loader.gif') no-repeat center
 	nav
 		display: inline-block
 		vertical-align: top
@@ -128,105 +234,6 @@ pre
 		padding: 2px 4px
 		border-radius: 2px
 		margin: 4px
-
-
-
-#controls
-	display: inline-block
-	width: 800px
-	line-height: 60px
-	button
-		background: transparent
-		color: rgb(180,180,180)
-		text-shadow: 0px -1px 0 black
-		&:hover
-			color: $base
-		&:active
-			color: $base * 0.8
-
-#queue
-	font-size: 16px
-	width: 30px
-	height: 30px
-	margin: 0 5px
-	&:before
-		content: "\2630"
-		position: relative
-		bottom: 2px
-
-
-#play
-	height: 40px
-	width: 40px
-	margin: 0 5px
-	border-radius: 20px
-	line-height: 40px
-	font-size: 16px
-	&.playing:before
-		content: "\2759\2759"
-		position: relative
-		bottom: 2px
-	&.paused:before
-		content: "\25B6"
-		position: relative
-		left: 2px
-
-#previous,
-#next
-	height: 30px
-	line-height: 30px
-	width: 30px
-	border-radius: 15px
-	font-size: 14px
-
-#previous:before,
-#next:before
-	letter-spacing: -5px
-	position: relative
-	right: 2px
-	bottom: 2px
-#next:before
-	content: "\25B6\25B6"
-#previous:before
-	content: "\25C0\25C0"
-
-#progress,
-#volume
-	margin: 0 4px
-	vertical-align: middle
-
-.inputBar
-	display: inline-block
-	width: 300px
-	height: 8px
-	border-radius: 4px
-	+background-image(linear-gradient(rgb(40,180,220), rgb(20, 120, 140)))
-	+box-shadow(0px 1px rgba(255,255,255,0.2), 0px -1px black)
-	.handler
-		height: 8px
-		width: 8px
-		border-radius: 4px
-		+background-image(linear-gradient(rgb(20,80,90), rgb(20, 50, 40)))
-
-
-#progress
-	width: 60%
-	vertical-align: middle
-
-#volume
-	width: 120px
-	vertical-align: middle
-
-#time,
-#duration
-	vertical-align: middle
-
-#loud,
-#mute
-	height: 18px
-	width: 18px
-	border-radius: 10px
-	vertical-align: middle
 
 #bio,
 #lyrics
@@ -244,21 +251,28 @@ pre
 		margin-bottom: 5px
 		background-color: rgb(230,230,230)
 
-#interprets:before
-	content: '\265D'
-	margin-right: 5px
+.bubble
+	z-index: 1
+	position: absolute
+	+background-image(linear-gradient(rgb(40,40,40), rgb(30,30,30)))
+	+border-radius(8px)
+	+box-shadow(2px 2px 8px rgba(0,0,0,0.5), inset 0 2px 5px rgba(255,255,255,0.1))
+	border: 1px solid black
+	&:before
+		z-index: -1
+		content: ''
+		border-color: transparent transparent rgb(0,0,0) transparent
+		border-style: solid
+		border-width: 12px
+		position: absolute
+	&:after
+		z-index: -1
+		content: ''
+		border-color: transparent transparent rgb(50,50,50) transparent
+		border-style: solid
+		border-width: 10px
+		position: absolute
 
-#charts:before
-	content: '\2605'
-	margin-right: 5px
-
-#songs:before
-	content: '\266B'
-	margin-right: 5px
-
-#playlists:before
-	content: '\2665'
-	margin-right: 5px
 
 
 @media all and (max-width: 480px)
