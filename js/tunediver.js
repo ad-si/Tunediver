@@ -2,21 +2,16 @@
 
     var baseURL = "",
         audio,
-        settings;
-    playlist = [];
+        settings = {},
+        playlist = [],
+        player = new Player();
 
-
-    var T = {
-        version:"12.02",
-        player:new Player()
-    };
-
-    function toggle(id){
-        if($(id).style.display == 'none'){
+    function toggle(id) {
+        if ($(id).style.display == 'none') {
 
             $(id).style.display = 'block';
 
-        }else{
+        } else {
             $(id).style.display = 'none';
         }
     }
@@ -34,6 +29,9 @@
     }
 
     function Player() {
+
+        var tempVolume;
+
 
         function setFavicon(state) {
 
@@ -122,10 +120,33 @@
             });
         }
 
-        this.changeVolume = function(n){
+        this.mute = function(){
+            if (audio.volume == 0) {
+                player.setVolume(true);
+            } else {
+                player.setVolume(false);
+            }
+        };
 
-            $('volume').value = Number($('volume').value) + n;
-            audio.volume = parseFloat($('volume').value);
+        this.setVolume = function (n, relative) {
+
+            relative = relative || false;
+
+            if (typeof(n) == 'number') {
+                if (relative) {
+                    $('volume').value = Number($('volume').value) + n;
+                    audio.volume = parseFloat($('volume').value);
+                } else {
+                    audio.volume = $('volume').value = n;
+                }
+            } else if (n === true) {
+                audio.volume = $('volume').value = tempVolume;
+            } else if (n === false) {
+                tempVolume = audio.volume;
+                audio.volume = $('volume').value = 0;
+            } else {
+                throw new Error(n + ' is not a valid value for the volume.');
+            }
         };
 
         this.playpause = function () {
@@ -181,7 +202,7 @@
             );
 
             $('play').addEventListener('click', function () {
-                T.player.playpause();
+                player.playpause();
             });
 
             $('progress').addEventListener('mousedown', function () {
@@ -195,21 +216,19 @@
                 }
             }, false);
 
-            $('queue').addEventListener('click', function(e){
+            $('queue').addEventListener('click', function (e) {
                 showQueue();
                 e.stopPropagation();
             });
 
-            $('mute').addEventListener('click', function () {
-                audio.volume = $('volume').value = 0;
-            }, false);
+            $('mute').addEventListener('click', player.mute, false);
 
             $('volume').addEventListener('change', function () {
                 audio.volume = parseFloat(this.value);
             }, false);
 
             $('loud').addEventListener('click', function () {
-                audio.volume = $('volume').value = 1;
+                player.setVolume(1);
             }, false);
 
             $('share').addEventListener('click', function () {
@@ -384,7 +403,7 @@
                         throw new Error('No source available for the song ' + song.title);
                     }
 
-                    T.player.playpause();
+                    player.playpause();
                     $('playerInfo').innerHTML = decodeURI(artistSlug).replace('+', ' ') + ' - ' + song.title;
 
 
@@ -431,7 +450,7 @@
                     throw new Error('No source available for the song ' + song.title);
                 }
 
-                T.player.playpause();
+                player.playpause();
                 $('playerInfo').innerHTML = decodeURI(artistSlug) + ' - ' + song.title;
 
             }, false);
@@ -496,7 +515,7 @@
         return{
             framework:function () {
 
-                function showSettings(){
+                function showSettings() {
                     toggle('settingsBubble');
 
                 }
@@ -525,7 +544,7 @@
                             ['div#c2'],
                             ['div#c3'],
                             ['div#c4'],
-                            ['div#settingsBubble.bubble',{style: 'display:none'}]
+                            ['div#settingsBubble.bubble', {style:'display:none'}]
                         ]
                     ]
                 );
@@ -534,7 +553,7 @@
                 $('wrapper').addEventListener('click', function (e) {
                     var bubbles = document.getElementsByClassName('bubble');
 
-                    for(var a = 0; a < bubbles.length; a++){
+                    for (var a = 0; a < bubbles.length; a++) {
 
                         //console.log(a, bubbles.length);
 
@@ -571,7 +590,7 @@
 
             index:function () {
                 view().framework();
-                T.player.init();
+                player.init();
                 print.startpage();
             },
 
@@ -593,18 +612,23 @@
         };
     }
 
-
     function setShortcuts() {
         addEventListener('keyup', function (e) {
 
-            switch(e.keyCode){
+            switch (e.keyCode) {
                 case 32: //spacebar
                     e.preventDefault();
-                    T.player.playpause();
+                    player.playpause();
                     break;
                 case 37: //left
                     break;
                 case 39: //right
+                    break;
+                case 76: //l
+                    player.setVolume(1);
+                    break;
+                case 77: //m
+                    player.mute();
                     break;
             }
 
@@ -612,18 +636,18 @@
 
         addEventListener('keydown', function (e) {
 
-            switch(e.keyCode){
+            switch (e.keyCode) {
                 case 37: //left
                     break;
                 case 39: //right
                     break;
                 case 38: //up
                     e.preventDefault();
-                    T.player.changeVolume(0.05);
+                    player.setVolume(0.05, true);
                     break;
                 case 40: //down
                     e.preventDefault();
-                    T.player.changeVolume(-0.05);
+                    player.setVolume(-0.05, true);
                     break;
             }
 
@@ -631,7 +655,8 @@
 
     }
 
-    function init() {
+
+    (function(){
         var path = location.pathname.substr(baseURL.length + 1, location.pathname.length);
 
         history.replaceState({"url":path}, path, baseURL + '/' + path);
@@ -647,10 +672,6 @@
             }
         }, false);
 
-    }
+    })();
 
-    init();
-
-    tunediver = T;
-
-})(window, document);
+} )(window, document);
