@@ -1,0 +1,9 @@
+[debug]
+address = "127.0.0.1"
+port = 7313
+
+[default]
+music_path = "music"
+
+[release]
+music_path = "/var/lib/tunediver/music"

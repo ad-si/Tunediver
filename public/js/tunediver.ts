@@ -1,0 +1,610 @@
+// Global song registry (simpler approach for TypeScript compatibility)
+let songRegistry: Record<string, SongRegistryEntry> = {}
+
+// DOM helper utility function similar to jQuery"s $
+function $(id: string): HTMLElement {
+  const element = document.getElementById(id)
+  if (!element) {
+    throw new Error(`Element with id "${id}" not found`)
+  }
+  return element
+}
+
+// DOM element creation/manipulation function (externally defined)
+declare function DOMinate(a: any[], ns?: string): HTMLElement
+
+// Global variables
+const baseURL = ""
+const settings: Record<string, any> = {}
+const playlist: Song[] = []
+
+// Utility functions
+function toggle(id: string): void {
+  const element = $(id)
+  if (element.style.display === "none") {
+    element.style.display = "block"
+  }
+  else {
+    element.style.display = "none"
+  }
+}
+
+// Helper function to play a song - centralized to improve reliability
+function playSong(song: Song, artistName: string, updateUrl: boolean = false): void {
+  if (!song || song.src === "") {
+    console.error("No source available for the song")
+    return
+  }
+
+  // Stop any currently playing audio
+  if (audio && !audio.paused) {
+    audio.pause()
+    const playEl = document.getElementById("play")
+    if (playEl) {
+      playEl.className = "paused"
+    }
+    setFavicon(false)
+  }
+
+  try {
+    // Create a new Audio object with the song source
+    const newAudio = new Audio(song.src)
+
+    // First set up all event listeners before replacing the global audio reference
+    // This ensures no event listeners are lost during transition
+
+    // Re-initialize all event listeners on the new audio object
+    newAudio.addEventListener("timeupdate", () => playerUpdater())
+    newAudio.addEventListener("loadedmetadata", () => playerUpdater())
+    newAudio.addEventListener("play", () => playerUpdater())
+
+    newAudio.addEventListener("ended", () => {
+      const playEl = document.getElementById("play")
+      if (playEl) {
+        playEl.className = "paused"
+      }
+      setFavicon(false)
+      newAudio.currentTime = 0
+      playerUpdater()
+    }, false)
+
+    // Set the volume to match the current volume
+    newAudio.volume = audio.volume
+
+    // Now replace the global audio instance
+    audio = newAudio
+
+    // Update UI and start playing
+    playpause()
+    $("playerInfo").innerHTML = decodeURI(artistName).replace("+", " ") + " - " + song.title
+
+    // Update URL only if explicitly requested
+    if (updateUrl && song.slug) {
+      const url = artistName + "/" + song.slug
+      history.pushState({"url": url}, song.title, baseURL + "/" + url)
+    }
+  } catch (e) {
+    console.error("Error playing song:", e)
+  }
+}
+
+function highlight(element: HTMLElement): void {
+  const containerEl = $("c2")
+  const links = containerEl.getElementsByTagName("div")
+  for (let i = 0; i < links.length; i++) {
+    links[i].className = "row"
+  }
+  element.className = "highlight row"
+}
+
+function ajax<T>(
+  url: string,
+  func: (data: T) => void
+): void {
+  const base = "/api"
+  const x = new XMLHttpRequest()
+  let str = ""
+  let res: ApiResponse<T>
+  let path: string
+
+  // loading spinner
+  const spinnerEl = $("spinner")
+  if (spinnerEl.style.display === "none") {
+    spinnerEl.style.display = "inline-block"
+  }
+
+  path = base + url + (str ? "?" + str : "")
+
+  x.open("get", path, true)
+  x.send(null)
+  x.onreadystatechange = function(): void {
+    if (x.readyState === 4) {
+      spinnerEl.style.display = "none"
+
+      if (x.status === 200) {
+        res = JSON.parse(x.responseText)
+
+        if (!res.error) {
+          if (res.data) {
+            func(res.data as T)
+          }
+          else {
+            throw new Error(`No data available for ${path}`)
+          }
+        }
+        else {
+          alert(`This Error occurred: ${res.error}`)
+        }
+      }
+      else {
+        throw new Error(
+          `Http error ${x.status} occurred during an ajax request to ${path}`
+        )
+      }
+    }
+  }
+}
+
+// Print namespace/object with rendering functions
+const printObj = {
+  artists(): void {
+    $("c2").style.display = "inline-block"
+    $("c4").innerHTML = ""
+
+    ajax<Artist[]>("/artists", (artists) => {
+      $("c2").innerHTML = ""
+
+      artists
+        .sort((artistA, artistB) => {
+          const nameA = artistA.name.toLowerCase()
+          const nameB = artistB.name.toLowerCase()
+          if (nameA < nameB) return -1
+          if (nameA > nameB) return 1
+          return 0
+        })
+        .forEach((artist) => {
+        const link = DOMinate(["a", artist.name])
+
+        link.addEventListener("click", (e: Event) => {
+          e.preventDefault()
+          const parentElement = link.parentNode as HTMLElement
+          if (parentElement) {
+            highlight(parentElement)
+          }
+
+          printObj.songs(artist.slug)
+          printObj.artist(artist.slug)
+
+          history.pushState({"url": artist.slug}, artist.slug, baseURL + "/" + artist.slug)
+        })
+
+        const container = DOMinate(
+          ["div#.row", {
+            "title": artist.name},
+            [link],
+            ["button", ""]
+          ]
+        )
+
+        $("c2").appendChild(container)
+      })
+    })
+  },
+
+  artist(slug: string): void {
+    // Portrait
+    ajax<Artist>(`/artists/${slug}`, (artist) => {
+      $("c4").innerHTML = ""
+
+      DOMinate(
+        [$("c4"),
+          ["div#artist",
+            ["img", {
+              src: baseURL + "/img/cover-placeholder.svg",
+              alt: "Image of" + artist.name}
+            ],
+            ["nav#artistNav",
+              ["h2#heading", artist.name],
+              ["p#country", artist.country || "Niemandsland"]
+            ],
+            ["div#bio", artist.bio || ""]
+          ]
+        ]
+      )
+    })
+  },
+
+  songs(artistSlug: string): void {
+    ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
+      // Clear the container first
+      $("c3").innerHTML = ""
+
+      // Render each song
+      songs.forEach((song, index) => {
+        // Create a unique ID for each song that we can use to look it up later
+        const songId = `song-${artistSlug}-${index}-${song.id || 0}`
+
+        // Store the song in our registry with the ID as the key
+        songRegistry[songId] = {
+          song: song,
+          artist: artistSlug
+        }
+
+        const link = DOMinate(["a", song.title])
+        const play = DOMinate(["button#.play"])
+        const add = DOMinate(["button#.add"])
+
+        // Create the song element with the data-id attribute
+        DOMinate(
+          [$("c3"),
+            ["div#.row", { "data-song-id": songId },
+              [play],
+              [link]
+            ]
+          ]
+        )
+      })
+
+      // Use event delegation on the container instead of individual handlers
+      const container = $("c3")
+
+      // Handle double-clicks on song divs
+      container.addEventListener("dblclick", (e) => {
+        // Find the closest song div to the clicked element
+        let target = e.target as HTMLElement
+        const songDiv = target.closest(".row") as HTMLElement
+
+        if (songDiv) {
+          e.preventDefault()
+          e.stopPropagation()
+
+          // Get the song ID from the data attribute
+          const songId = songDiv.getAttribute("data-song-id")
+          if (songId && songRegistry[songId]) {
+            const { song, artist } = songRegistry[songId]
+            console.log("Double-clicked song:", song.title)
+            playSong(song, artist, false)
+          }
+          return false
+        }
+      })
+
+      // Handle clicks on play buttons
+      container.addEventListener("click", (e) => {
+        let target = e.target as HTMLElement
+        if (target.classList.contains("play")) {
+          e.preventDefault()
+          e.stopPropagation()
+
+          // Find the parent song div
+          const songDiv = target.closest(".row") as HTMLElement
+          if (songDiv) {
+            // Get the song ID from the data attribute
+            const songId = songDiv.getAttribute("data-song-id")
+            if (songId && songRegistry[songId]) {
+              const { song, artist } = songRegistry[songId]
+              console.log("Play button clicked for:", song.title)
+              playSong(song, artist, false)
+            }
+          }
+          return false
+        }
+
+        // Handle clicks on song links
+        if (target.tagName.toLowerCase() === "a" && target.closest(".row")) {
+          e.preventDefault()
+
+          // Find the parent song div
+          const songDiv = target.closest(".row") as HTMLElement
+          if (songDiv) {
+            // Get the song ID from the data attribute
+            const songId = songDiv.getAttribute("data-song-id")
+            if (songId && songRegistry[songId]) {
+              const { song, artist } = songRegistry[songId]
+              printObj.song(song.slug, artist)
+
+              // Save in history object
+              const url = artist + "/" + song.slug
+              history.pushState({"url": url}, song.slug, baseURL + "/" + url)
+            }
+          }
+          return false
+        }
+      })
+    })
+  },
+
+  song(songSlug: string, artistSlug: string): void {
+    ajax<Song>(`/artists/${artistSlug}/songs/${songSlug}`, (songData) => {
+      $("c4").innerHTML = ""
+
+      // Store the song in our registry
+      const detailSongId = `song-detail-${artistSlug}-${songSlug}`
+
+
+      // Store song data in registry
+      songRegistry[detailSongId] = {
+        song: songData,
+        artist: artistSlug
+      }
+
+      // Create song detail view with data-id attribute
+      const songDetailDiv = DOMinate(
+        [$("c4"),
+          ["div#song", {"data-song-id": detailSongId},
+            ["button#playSong", "Play"],
+            ["button#addSong", "Add"],
+            ["button#shareSong", "Share"],
+            ["img", {
+              "src": baseURL + "/img/cover-placeholder.svg",
+              "alt": "Image of" + (songData.track_artist || ""),
+            }],
+            ["nav#songNav",
+              ["h2#heading", songData.title],
+              ["p#trackArtist", songData.track_artist || ""],
+              ["p#fileName", songData.file_name || ""],
+            ],
+            ["pre#lyrics", songData.lyrics || ""],
+          ]
+        ]
+      )
+
+      // Use event delegation for detail view too
+      const container = $("c4")
+
+      container.addEventListener("dblclick", (e) => {
+        let target = e.target as HTMLElement
+        const songDiv = target.closest("#song") as HTMLElement
+
+        if (songDiv) {
+          e.preventDefault()
+          e.stopPropagation()
+
+          const songId = songDiv.getAttribute("data-song-id")
+          if (songId && songRegistry[songId]) {
+            const { song, artist } = songRegistry[songId]
+            console.log("Song detail double-clicked:", song.title)
+            playSong(song, artist, false)
+          }
+          return false
+        }
+      })
+
+      container.addEventListener("click", (e) => {
+        let target = e.target as HTMLElement
+
+        if (target.id === "playSong") {
+          e.preventDefault()
+          e.stopPropagation()
+
+          const songDiv = document.getElementById("song")
+          if (songDiv) {
+            const songId = songDiv.getAttribute("data-song-id")
+            if (songId && songRegistry[songId]) {
+              const { song, artist } = songRegistry[songId]
+              console.log("Detail play button clicked:", song.title)
+              playSong(song, artist, false)
+            }
+          }
+          return false
+        }
+
+        if (target.id === "addSong") {
+          const songDiv = document.getElementById("song")
+          if (songDiv) {
+            const songId = songDiv.getAttribute("data-song-id")
+            if (songId && songRegistry[songId]) {
+              playlist.push(songRegistry[songId].song)
+            }
+          }
+        }
+      })
+    })
+  },
+
+  startpage(): void {
+    DOMinate(
+      [$("c4"),
+        ["h2", "Welcome to Tunediver"]
+      ]
+    )
+  }
+}
+
+function viewController(): Record<string, Function> {
+  return {
+    framework(): void {
+      function showSettings(): void {
+        toggle("settingsBubble")
+      }
+
+      DOMinate(
+        [document.body,
+          ["div#wrapper",
+            ["nav#nav",
+              ["h1#logo", "Tunediver",
+                ["img#spinner", {
+                  "src": "data:image/svg+xml,%3C?xml%20version=%221.0%22%20encoding=%22utf-8%22?%3E%3Csvg%20width=%2220%22%20height=%2220%22%20xmlns=%22http://www.w3.org/2000/svg%22%20xmlns:xlink=%22http://www.w3.org/1999/xlink%22%3E%3Cdefs%3E%3Crect%20id=%22l%22%20x=%222%22%20y=%22-1%22%20rx=%221%22%20ry=%221%22%20width=%228%22%20height=%222%22%20fill=%22#000%22%3E%3C/rect%3E%3C/defs%3E%3Cg%20transform=%22translate(10,%2010)%22%3E%3Canimatetransform%20attributename=%22transform%22%20calcmode=%22discrete%22%20type=%22rotate%22%20values=%220;30;60;90;120;150;180;210;240;270;300;330;360%22%20additive=%22sum%22%20dur=%221000ms%22%20repeatdur=%22indefinite%22%3E%3C/animatetransform%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(0)%22%20opacity=%220%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(30)%22%20opacity=%220.08%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(60)%22%20opacity=%220.17%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(90)%22%20opacity=%220.25%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(120)%22%20opacity=%220.33%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(150)%22%20opacity=%220.42%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(180)%22%20opacity=%220.5%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(210)%22%20opacity=%220.58%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(240)%22%20opacity=%220.67%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(270)%22%20opacity=%220.75%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(300)%22%20opacity=%220.83%22%3E%3C/use%3E%3Cuse%20xlink:href=%22#l%22%20transform=%22rotate(330)%22%20opacity=%220.92%22%3E%3C/use%3E%3C/g%3E%3C/svg%3E",
+                  "style": "display:none"}
+                ]
+              ],
+              ["div#controls"],
+              ["button#settings"]
+            ],
+            ["div#c1",
+              ["input#search", {type: "search", placeholder: "search"}],
+              ["button#artists", "Artists"],
+              ["button#songs", "Songs"],
+              ["button#info", "Infos"],
+              ["button#charts", "Charts"],
+              ["button#playlists", "Playlists"]
+            ],
+            ["div#c2"],
+            ["div#c3"],
+            ["div#c4"],
+            ["div#Bubble.bubble", {style: "display:none"}]
+          ]
+        ]
+      )
+
+      const wrapperEl = $("wrapper")
+      wrapperEl.addEventListener("click", () => {
+        const bubbles = document.getElementsByClassName("bubble")
+
+        for (let a = 0; a < bubbles.length; a++) {
+          const element = bubbles[a] as HTMLElement
+          element.style.display = "none"
+
+          element.addEventListener("click", (e: Event) => {
+            e.stopPropagation()
+          })
+        }
+      })
+
+      $("search").addEventListener("keyup", (e: Event) => {
+        e.stopPropagation()
+      })
+
+      $("logo").addEventListener("click", () => {
+        window.location.href = baseURL + "/"
+      })
+
+      $("charts").addEventListener("click", () => {
+        printObj.songs("")
+      })
+
+      $("artists").addEventListener("click", () => {
+        printObj.artists()
+      })
+
+      $("settings").addEventListener("click", (e: Event) => {
+        showSettings()
+        e.stopPropagation()
+      })
+    },
+
+    index(): void {
+      this.framework()
+      initPlayer()
+      printObj.startpage()
+    },
+
+    artist(dir: string): void {
+      printObj.artists()
+      printObj.songs(dir)
+      printObj.artist(dir)
+    },
+
+    artists(): void {
+      printObj.artists()
+    },
+
+    song(dirs: string[] | [string, string]): void {
+      printObj.artists()
+      printObj.songs(dirs[0])
+      printObj.song(dirs[1], dirs[0])
+    }
+  }
+}
+
+function route(state: string | { url?: string }): void {
+  // Check if first call
+  const logoEl = document.getElementById("logo")
+  if (!logoEl) viewController().index()
+
+  // History object or URL
+  if (typeof(state) === "object") {
+    if (state.url) {
+      fromURL(state.url)
+    }
+    else {
+      throw new Error(
+        "History Object does not contain an URL: " + String(state.url)
+      )
+    }
+  }
+  else if (typeof(state) === "string") {
+    fromURL(state)
+  }
+  else {
+    throw new Error(
+      "The variable passed to route() is not an object or a string: " + String(state)
+    )
+  }
+
+  function fromURL(url: string): void {
+    const dirs = url.split("/")
+    const view = viewController()
+
+    if (dirs.length === 1 && dirs[0] !== "") view.artist(dirs[0])
+      else if (dirs.length === 2) view.song(dirs)
+      else if (url === "") {
+      // Empty URL, do nothing
+    }
+    else if (url !== "") {
+      alert("This website is not available")
+      throw new Error("Can not route the URL " + url)
+    }
+  }
+}
+
+// Keyboard shortcuts
+function setShortcuts(): void {
+  window.addEventListener("keyup", (e: KeyboardEvent) => {
+    switch (e.keyCode) {
+      case 32: //spacebar
+        e.preventDefault()
+        playpause()
+        break
+        case 37: //left
+        break
+        case 39: //right
+        break
+        case 76: //l
+        setVolume(1)
+        break
+        case 77: //m
+        mute()
+        break
+      }
+  })
+
+  window.addEventListener("keydown", (e: KeyboardEvent) => {
+    switch (e.keyCode) {
+      case 37: //left
+        break
+        case 39: //right
+        break
+        case 38: //up
+        e.preventDefault()
+        setVolume(0.05, true)
+        break
+        case 40: //down
+        e.preventDefault()
+        setVolume(-0.05, true)
+        break
+      }
+  })
+}
+
+const path = location.pathname.slice(baseURL.length + 1, location.pathname.length)
+
+// Set initial history state with URL path
+// This ensures page reloads will have state available
+history.replaceState({"url": path}, path, baseURL + "/" + path)
+
+// Apply initial routing
+route(path)
+setShortcuts()
+
+//Popstate
+window.addEventListener("popstate", (event: PopStateEvent) => {
+  if (event.state != null) {
+    route(event.state)
+  }
+  else {
+    // Handle page reload when state is null
+    const path = location.pathname.slice(baseURL.length + 1, location.pathname.length)
+    route(path)
+  }
+})

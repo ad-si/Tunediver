@@ -1,3 +1,4 @@
+*.js
+*.js.map
 .DS_Store
-.sass-cache
-.idea
+target

@@ -1,0 +1,197 @@
+:root {
+  --primary-color: #28b4dc;
+  --secondary-color: #14788c;
+  --highlight-color: #aaeeff;
+  --shadow-color: rgba(0, 0, 0, 0.6);
+  --light-shadow-color: rgba(255, 255, 255, 0.2);
+  --dark-shadow-color: #000;
+  --background-color: #323232;
+}
+
+#controls {
+  position: absolute;
+  left: 200px;
+  top: 0px;
+}
+#controls > * {
+  display: inline-block;
+  vertical-align: middle;
+}
+#play {
+  height: 40px;
+  width: 40px;
+  margin: 0 5px;
+  border-radius: 20px;
+  line-height: 40px;
+  font-size: 16px;
+}
+#play.playing:before {
+  content: "\2759\2759";
+  position: relative;
+  bottom: 2px;
+}
+#play.paused:before {
+  content: "\25B6";
+  position: relative;
+  left: 2px;
+}
+#previous,
+#next {
+  height: 30px;
+  line-height: 30px;
+  width: 30px;
+  border-radius: 15px;
+  font-size: 14px;
+}
+#previous:before,
+#next:before {
+  letter-spacing: -5px;
+  position: relative;
+  right: 2px;
+  bottom: 2px;
+}
+#previous:before {
+  content: "\25C0\25C0";
+}
+#next {
+  margin-right: 30px;
+}
+#next:before {
+  content: "\25B6\25B6";
+}
+.inputBar {
+  display: inline-block;
+  width: 300px;
+  height: 8px;
+  border-radius: 4px;
+  background-image: linear-gradient(var(--primary-color), var(--secondary-color));
+  box-shadow:
+    0px 1px var(--light-shadow-color),
+    0px -1px var(--dark-shadow-color);
+}
+.inputBar .handler {
+  height: 8px;
+  width: 8px;
+  border-radius: 4px;
+  background-image: linear-gradient(var(--highlight-color), #99ccee);
+}
+#playerInfo {
+  font-size: 11px;
+  line-height: 1.2;
+  position: relative;
+  top: 12px;
+  left: 8px;
+}
+#progressInput {
+  width: 400px;
+  height: 8px;
+  margin: 0 4px;
+  cursor: pointer;
+  /* Custom styling for webkit browsers */
+  -webkit-appearance: none;
+  background-color: var(--background-color);
+  border-radius: 4px;
+  box-shadow:
+    inset 0px 1px 1px var(--dark-shadow-color),
+    0px 1px var(--light-shadow-color);
+}
+
+/* Styling for the thumb (handle) */
+#progressInput::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background-image: linear-gradient(var(--highlight-color), #99ccee);
+  cursor: pointer;
+  box-shadow: 0px 1px 2px var(--shadow-color);
+  position: relative;
+  top: -4px;
+}
+
+#progressInput::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  background-image: linear-gradient(var(--highlight-color), #99ccee);
+  cursor: pointer;
+  box-shadow: 0px 1px 2px var(--shadow-color);
+  border: none;
+}
+
+/* Styling for the track (progress bar) */
+#progressInput::-webkit-slider-runnable-track {
+  background-image: linear-gradient(var(--primary-color), var(--secondary-color));
+  height: 8px;
+  border-radius: 4px;
+}
+
+#progressInput::-moz-range-track {
+  background-image: linear-gradient(var(--primary-color), var(--secondary-color));
+  height: 8px;
+  border-radius: 4px;
+}
+#volume {
+  width: 120px;
+  margin: 0 4px;
+}
+#time,
+#duration {
+  vertical-align: middle;
+}
+#queue {
+  z-index: 10;
+  vertical-align: -20%;
+  font-size: 16px;
+  width: 30px;
+  height: 30px;
+  margin: 0 5px 0 30px;
+}
+#queue:before {
+  content: "\2630";
+}
+#currentQueue {
+  top: 72px;
+  left: 385px;
+  width: 200px;
+  height: 200px;
+}
+#currentQueue:before {
+  top: -24px;
+  right: 28px;
+}
+#currentQueue:after {
+  top: -20px;
+  right: 30px;
+}
+#loud,
+#mute {
+  height: 18px;
+  width: 18px;
+  border-radius: 10px;
+  vertical-align: middle;
+}
+#mute {
+  margin-left: 30px;
+}
+#repeat:before {
+  content: '\21BA';
+  font-size: 20px;
+  font-weight: 900;
+  margin-left: 20px;
+  vertical-align: middle;
+}
+#shuffle:before {
+  content: '\21C4';
+  font-size: 20px;
+  font-weight: 900;
+  margin-left: 20px;
+  vertical-align: middle;
+}
+#share:before {
+  content: '\2709';
+  font-size: 20px;
+  font-weight: 900;
+  margin-left: 20px;
+  vertical-align: middle;
+}
