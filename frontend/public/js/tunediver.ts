@@ -113,11 +113,12 @@ function ajax<T>(
   let res: ApiResponse<T>
   let path: string
 
-  // loading spinner
+  // Show loading spinner only if the request takes noticeable time,
+  // to avoid a flash on fast responses
   const spinnerEl = $("spinner")
-  if (spinnerEl.style.display === "none") {
+  const spinnerTimeout = window.setTimeout(() => {
     spinnerEl.style.display = "inline-block"
-  }
+  }, 200)
 
   path = base + url + (str ? "?" + str : "")
 
@@ -125,6 +126,7 @@ function ajax<T>(
   x.send(null)
   x.onreadystatechange = function(): void {
     if (x.readyState === 4) {
+      window.clearTimeout(spinnerTimeout)
       spinnerEl.style.display = "none"
 
       if (x.status === 200) {
