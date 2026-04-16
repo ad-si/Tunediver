@@ -5,6 +5,7 @@ type Song = {
   slug: string
   src: string
   track_artist?: string
+  artist_slug?: string
   lyrics?: string
   file_name?: string
 }

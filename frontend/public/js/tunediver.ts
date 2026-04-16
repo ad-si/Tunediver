@@ -273,6 +273,8 @@ function ajax<T>(
 const printObj = {
   artists(): void {
     $("c2").style.display = "inline-block"
+    // Restore c3 in case the "Songs" tab had hidden it
+    $("c3").style.display = ""
     $("c4").innerHTML = ""
 
     ajax<Artist[]>("/artists", (artists) => {
@@ -355,6 +357,8 @@ const printObj = {
     ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
       // Clear the container first
       $("c3").innerHTML = ""
+      // Restore c3 in case the "Songs" tab had hidden it
+      $("c3").style.display = ""
 
       // Render each song
       songs.forEach((song, index) => {
@@ -552,7 +556,95 @@ const printObj = {
         ["h2", "Welcome to Tunediver"]
       ]
     )
-  }
+  },
+
+  // Flat, alphabetical list of every song in the catalog, rendered into
+  // c2. c3 is hidden because this view has no "second column" — clicking
+  // a song jumps straight to its detail in c4, double-clicking plays it.
+  allSongs(): void {
+    $("c2").innerHTML = ""
+    $("c3").innerHTML = ""
+    $("c4").innerHTML = ""
+    $("c2").style.display = "inline-block"
+    $("c3").style.display = "none"
+
+    ajax<Song[]>("/songs", (songs) => {
+      songs.forEach((song, index) => {
+        const artistSlug = song.artist_slug || ""
+        const songId = `allsong-${index}-${song.id || 0}`
+
+        songRegistry[songId] = {
+          song: song,
+          artist: artistSlug,
+        }
+
+        const link = shaven(["a", song.title]).rootElement
+        const play = shaven(["button#.play"]).rootElement
+
+        shaven(
+          [$("c2"),
+            ["div#.row", {
+              "title": (song.track_artist || "") + " \u2014 " + song.title,
+              "data-song-id": songId,
+              "data-artist-slug": artistSlug,
+              "data-song-slug": song.slug,
+            },
+              [play],
+              [link],
+            ],
+          ]
+        )
+      })
+
+      updatePlayingMarkers()
+
+      const container = $("c2")
+
+      container.addEventListener("dblclick", (e) => {
+        const target = e.target as HTMLElement
+        const songDiv = target.closest(".row") as HTMLElement | null
+        if (!songDiv || !songDiv.hasAttribute("data-song-id")) return
+        e.preventDefault()
+        e.stopPropagation()
+        const songId = songDiv.getAttribute("data-song-id")
+        if (songId && songRegistry[songId]) {
+          const { song, artist } = songRegistry[songId]
+          playSong(song, artist, false)
+        }
+      })
+
+      container.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement
+
+        if (target.classList.contains("play")) {
+          const songDiv = target.closest(".row") as HTMLElement | null
+          if (!songDiv || !songDiv.hasAttribute("data-song-id")) return
+          e.preventDefault()
+          e.stopPropagation()
+          const songId = songDiv.getAttribute("data-song-id")
+          if (songId && songRegistry[songId]) {
+            const { song, artist } = songRegistry[songId]
+            playSong(song, artist, false)
+          }
+          return
+        }
+
+        if (target.tagName.toLowerCase() === "a") {
+          const songDiv = target.closest(".row") as HTMLElement | null
+          if (!songDiv || !songDiv.hasAttribute("data-song-id")) return
+          e.preventDefault()
+          highlight(songDiv)
+          const songId = songDiv.getAttribute("data-song-id")
+          if (songId && songRegistry[songId]) {
+            const { song, artist } = songRegistry[songId]
+            printObj.song(song.slug, artist)
+            const url = artist + "/" + song.slug
+            history.pushState({"url": url}, song.slug, baseURL + "/" + url)
+          }
+        }
+      })
+    })
+  },
 }
 
 function viewController(): Record<string, Function> {
@@ -619,6 +711,10 @@ function viewController(): Record<string, Function> {
 
       $("artists").addEventListener("click", () => {
         printObj.artists()
+      })
+
+      $("songs").addEventListener("click", () => {
+        printObj.allSongs()
       })
 
       $("settings").addEventListener("click", (e: Event) => {

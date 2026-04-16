@@ -185,6 +185,7 @@ fn track_to_song(track: &Track) -> Song {
     slug: encode(&track.title),
     src: format!("/api/{}/{}", encode(&track.artist), encode(&track.title)),
     track_artist: track.artist.clone(),
+    artist_slug: encode(&track.artist),
   }
 }
 
@@ -211,6 +212,7 @@ struct Song {
   slug: String,
   src: String,
   track_artist: String,
+  artist_slug: String,
 }
 
 #[derive(Serialize)]
@@ -264,6 +266,25 @@ fn get_artists(config: &State<AppConfig>) -> Json<ArtistResponse> {
     error: false,
     data: config.catalog.list_artists(),
   })
+}
+
+// All songs in the catalog, sorted alphabetically by title
+// (case-insensitive) so the "Songs" tab can display a flat list.
+#[get("/songs")]
+fn get_all_songs(config: &State<AppConfig>) -> Json<SongResponse> {
+  let mut songs: Vec<Song> =
+    config.catalog.tracks.iter().map(track_to_song).collect();
+  songs.sort_by(|a, b| {
+    a.title
+      .to_lowercase()
+      .cmp(&b.title.to_lowercase())
+      .then_with(|| {
+        a.track_artist
+          .to_lowercase()
+          .cmp(&b.track_artist.to_lowercase())
+      })
+  });
+  Json(SongResponse { data: songs })
 }
 
 #[get("/artists/<artist>/songs")]
@@ -418,6 +439,7 @@ fn rocket() -> _ {
       "/api",
       routes![
         get_artists,
+        get_all_songs,
         get_artist_songs,
         get_artist_info,
         get_song,
