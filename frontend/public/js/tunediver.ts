@@ -34,6 +34,18 @@ let currentlyPlaying: { artistSlug: string, songSlug: string } | null = null
 //   "songs"   → neighbour is the prev/next entry in the flat songs list
 let currentTab: "artists" | "songs" = "artists"
 
+// Mark the given c1 tab button as active and clear the active state
+// from the others. Pass null to clear all. Drives the colored highlight
+// on whichever tab's view is currently rendered.
+function setActiveTab(tabId: string | null): void {
+  document.querySelectorAll("#c1 > button").forEach((b) => {
+    b.classList.remove("active")
+  })
+  if (!tabId) return
+  const tab = document.getElementById(tabId)
+  if (tab) tab.classList.add("active")
+}
+
 // Add/remove the `.playing` CSS class on artist and song rows so the
 // currently playing track is visually highlighted in the columns.
 // Called whenever the playback state or the rendered lists change.
@@ -298,6 +310,7 @@ function ajax<T>(
 const printObj = {
   artists(): void {
     currentTab = "artists"
+    setActiveTab("artists")
     $("c2").style.display = "inline-block"
     // Restore c3 in case the "Songs" tab had hidden it
     $("c3").style.display = ""
@@ -589,6 +602,7 @@ const printObj = {
   // a song jumps straight to its detail in c4, double-clicking plays it.
   allSongs(): void {
     currentTab = "songs"
+    setActiveTab("songs")
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""

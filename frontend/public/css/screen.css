@@ -416,6 +416,11 @@ h3 {
   background-color: var(--overlay-button-active);
 }
 
+#c1>button.active {
+  color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
 input[type="search"] {
   -webkit-appearance: textfield;
   font: 500 16px/28px "Arial", sans-serif;
