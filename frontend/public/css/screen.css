@@ -421,6 +421,30 @@ input[type="search"] {
   display: inline-block;
 }
 
+.row.playing {
+  color: #28b4dc;
+}
+
+/* Sits inside the existing 20px-wide button gutter so the song title
+   stays anchored — exactly like the hover play button. */
+.row.playing::before {
+  content: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='12' height='12'><path fill='%2328b4dc' d='M3 9v6h4l6 5V4L7 9H3z'/><path fill='none' stroke='%2328b4dc' stroke-width='2' stroke-linecap='round' d='M16 8a6 6 0 0 1 0 8M19 5a10 10 0 0 1 0 14'/></svg>");
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Hide the play/add buttons on the playing row so the speaker icon
+   remains visible on hover and highlight. */
+.row.playing:hover button,
+.row.playing.highlight button {
+  display: none;
+}
+
 #c4 {
   padding: 30px;
   min-width: 300px;

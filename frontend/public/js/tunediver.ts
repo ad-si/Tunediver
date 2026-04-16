@@ -24,6 +24,35 @@ const baseURL = ""
 const settings: Record<string, any> = {}
 const playlist: Song[] = []
 
+// Tracks which song is currently loaded in the player so that matching rows
+// in the artist (c2) and song (c3) columns can be marked as playing.
+let currentlyPlaying: { artistSlug: string, songSlug: string } | null = null
+
+// Add/remove the `.playing` CSS class on artist and song rows so the
+// currently playing track is visually highlighted in the columns.
+// Called whenever the playback state or the rendered lists change.
+function updatePlayingMarkers(): void {
+  document.querySelectorAll(".row.playing").forEach((r) => {
+    r.classList.remove("playing")
+  })
+
+  if (!currentlyPlaying || audio.paused) return
+
+  const artistSlug = currentlyPlaying.artistSlug
+  const songSlug = currentlyPlaying.songSlug
+
+  const artistRow = document.querySelector(
+    `#c2 .row[data-artist-slug="${CSS.escape(artistSlug)}"]`
+  )
+  if (artistRow) artistRow.classList.add("playing")
+
+  const songRow = document.querySelector(
+    `#c3 .row[data-artist-slug="${CSS.escape(artistSlug)}"]`
+    + `[data-song-slug="${CSS.escape(songSlug)}"]`
+  )
+  if (songRow) songRow.classList.add("playing")
+}
+
 // Utility functions
 function toggle(id: string): void {
   const element = $(id)
@@ -67,7 +96,11 @@ function playSong(
     // Re-initialize all event listeners on the new audio object
     newAudio.addEventListener("timeupdate", () => playerUpdater())
     newAudio.addEventListener("loadedmetadata", () => playerUpdater())
-    newAudio.addEventListener("play", () => playerUpdater())
+    newAudio.addEventListener("play", () => {
+      playerUpdater()
+      updatePlayingMarkers()
+    })
+    newAudio.addEventListener("pause", () => updatePlayingMarkers())
 
     newAudio.addEventListener("ended", () => {
       const playEl = document.getElementById("play")
@@ -77,6 +110,7 @@ function playSong(
       setFavicon(false)
       newAudio.currentTime = 0
       playerUpdater()
+      updatePlayingMarkers()
     }, false)
 
     // Set the volume to match the current volume
@@ -84,6 +118,11 @@ function playSong(
 
     // Now replace the global audio instance
     audio = newAudio
+
+    // Remember which track is loaded so row markers can find it. Markers
+    // are applied on the "play" event (or removed on "pause"/"ended"),
+    // so pre-loaded tracks that aren't autoplaying stay unmarked.
+    currentlyPlaying = { artistSlug: artistName, songSlug: song.slug }
 
     // Update UI and optionally start playing
     if (autoplay) {
@@ -257,7 +296,8 @@ const printObj = {
 
         const container = shaven(
           ["div#.row", {
-            "title": artist.name},
+            "title": artist.name,
+            "data-artist-slug": artist.slug},
             [link],
             ["button", ""]
           ]
@@ -265,6 +305,8 @@ const printObj = {
 
         $("c2").appendChild(container)
       })
+
+      updatePlayingMarkers()
     })
   },
 
@@ -314,13 +356,19 @@ const printObj = {
         // Create the song element with the data-id attribute
         shaven(
           [$("c3"),
-            ["div#.row", { "data-song-id": songId },
+            ["div#.row", {
+              "data-song-id": songId,
+              "data-artist-slug": artistSlug,
+              "data-song-slug": song.slug,
+            },
               [play],
               [link]
             ]
           ]
         )
       })
+
+      updatePlayingMarkers()
 
       // Use event delegation on the container instead of individual handlers
       const container = $("c3")
