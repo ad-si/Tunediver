@@ -81,7 +81,7 @@ function initPlayer () {
         ["button#repeat"],
         ["button#share"],
         ["button#mute", "-"],
-        ["input#volume", {type: "range", min: "0", max: "1", step: "0.01"}],
+        ["input#volume", {type: "range", min: "0", max: "1", step: "0.01", value: "0.5"}],
         ["button#loud", "+"],
         ["div#currentQueue.bubble", {style: "display: none"}]
       ]
@@ -132,10 +132,14 @@ function initPlayer () {
 
     const volumeEl = document.getElementById("volume") as HTMLInputElement
     if (volumeEl) {
-      volumeEl.addEventListener("change", () => {
+      // Paint the track fill to match the initial slider position.
+      volumeEl.style.setProperty("--volume", (parseFloat(volumeEl.value) * 100) + "%")
+
+      volumeEl.addEventListener("input", () => {
         if (audio) {
           audio.volume = parseFloat(volumeEl.value)
         }
+        volumeEl.style.setProperty("--volume", (parseFloat(volumeEl.value) * 100) + "%")
       })
     }
 
@@ -346,6 +350,9 @@ function setVolume(n: number | boolean, relative?: boolean): void {
   else {
     throw new Error(String(n) + " is not a valid value for the volume.")
   }
+
+  // Keep the track fill in sync after programmatic changes (mute, loud, etc.).
+  volumeEl.style.setProperty("--volume", (parseFloat(volumeEl.value) * 100) + "%")
 }
 
 function playpause(): void {

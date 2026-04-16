@@ -139,7 +139,55 @@
 }
 #volume {
   width: 120px;
+  height: 8px;
   margin: 0 4px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  background-color: var(--background-color);
+  border-radius: 4px;
+  box-shadow:
+    inset 0px 1px 1px var(--dark-shadow-color),
+    0px 1px var(--light-shadow-color);
+}
+
+#volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background-image: linear-gradient(#ffffff, #cccccc);
+  cursor: pointer;
+  box-shadow: 0px 1px 2px var(--shadow-color);
+  position: relative;
+  top: -4px;
+}
+
+#volume::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  background-image: linear-gradient(#ffffff, #cccccc);
+  cursor: pointer;
+  box-shadow: 0px 1px 2px var(--shadow-color);
+  border: none;
+}
+
+#volume::-webkit-slider-runnable-track {
+  background-image: linear-gradient(#787878, #505050);
+  background-size: var(--volume, 50%) 100%;
+  background-repeat: no-repeat;
+  background-color: transparent;
+  height: 8px;
+  border-radius: 4px;
+}
+
+#volume::-moz-range-track {
+  background-image: linear-gradient(#787878, #505050);
+  background-size: var(--volume, 50%) 100%;
+  background-repeat: no-repeat;
+  background-color: transparent;
+  height: 8px;
+  border-radius: 4px;
 }
 #time,
 #duration {
