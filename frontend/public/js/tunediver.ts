@@ -126,12 +126,40 @@ function tryRandomArtist(remaining: Artist[]): void {
 }
 
 function highlight(element: HTMLElement): void {
-  const containerEl = $("c2")
-  const links = containerEl.getElementsByTagName("div")
-  for (let i = 0; i < links.length; i++) {
-    links[i].className = "row"
+  const containerEl = element.parentElement
+  if (!containerEl) return
+  const rows = containerEl.getElementsByClassName("row")
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].className = "row"
   }
   element.className = "highlight row"
+}
+
+// Move the highlight in c3 (preferred) or c2 by `direction` (+1 or -1) and
+// trigger a click on the new row's link so the existing handlers run
+// (loading songs / song details). Returns true if navigation happened.
+function navigateList(direction: 1 | -1): boolean {
+  let highlighted = $("c3").querySelector(".row.highlight") as HTMLElement | null
+  if (!highlighted) {
+    highlighted = $("c2").querySelector(".row.highlight") as HTMLElement | null
+  }
+  if (!highlighted) return false
+
+  let sibling = (direction > 0
+    ? highlighted.nextElementSibling
+    : highlighted.previousElementSibling) as HTMLElement | null
+  // Skip non-row siblings just in case
+  while (sibling && !sibling.classList.contains("row")) {
+    sibling = (direction > 0
+      ? sibling.nextElementSibling
+      : sibling.previousElementSibling) as HTMLElement | null
+  }
+  if (!sibling) return false
+
+  const link = sibling.querySelector("a") as HTMLElement | null
+  if (link) link.click()
+  sibling.scrollIntoView({ block: "nearest" })
+  return true
 }
 
 function ajax<T>(
@@ -215,6 +243,16 @@ const printObj = {
           printObj.artist(artist.slug)
 
           history.pushState({"url": artist.slug}, artist.slug, baseURL + "/" + artist.slug)
+        })
+
+        link.addEventListener("dblclick", (e: Event) => {
+          e.preventDefault()
+          e.stopPropagation()
+          ajax<Song[]>(`/artists/${artist.slug}/songs`, (songs) => {
+            if (songs.length) {
+              playSong(songs[0], artist.slug, false)
+            }
+          })
         })
 
         const container = shaven(
@@ -336,6 +374,7 @@ const printObj = {
           // Find the parent song div
           const songDiv = target.closest(".row") as HTMLElement
           if (songDiv) {
+            highlight(songDiv)
             // Get the song ID from the data attribute
             const songId = songDiv.getAttribute("data-song-id")
             if (songId && songRegistry[songId]) {
@@ -609,6 +648,11 @@ function setShortcuts(): void {
   })
 
   window.addEventListener("keydown", (e: KeyboardEvent) => {
+    // Don't hijack arrows while typing in an input/textarea
+    const active = document.activeElement
+    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+      return
+    }
     switch (e.keyCode) {
       case 37: //left
         break
@@ -616,11 +660,11 @@ function setShortcuts(): void {
         break
         case 38: //up
         e.preventDefault()
-        setVolume(0.05, true)
+        if (!navigateList(-1)) setVolume(0.05, true)
         break
         case 40: //down
         e.preventDefault()
-        setVolume(-0.05, true)
+        if (!navigateList(1)) setVolume(-0.05, true)
         break
       }
   })
