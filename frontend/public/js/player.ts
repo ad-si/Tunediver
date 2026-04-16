@@ -246,12 +246,14 @@ function playerUpdater(): void {
       if (document.activeElement !== progressInputEl) {
         progressInputEl.value = progress.toString()
       }
+      progressInputEl.style.setProperty("--progress", progress + "%")
 
       // Debug information to help verify updates
       console.debug(`Player update: ${audio.currentTime.toFixed(1)}/${audio.duration.toFixed(1)}s (${progress.toFixed(1)}%)`)
     } else {
       // Reset progress bar if no valid audio
       progressInputEl.value = "0"
+      progressInputEl.style.setProperty("--progress", "0%")
     }
   } catch (e) {
     console.error("Error in playerUpdater:", e)
