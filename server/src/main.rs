@@ -285,15 +285,15 @@ fn get_artist_songs(
 
 #[get("/artists/<artist>/songs/<song>")]
 fn get_song(
-  artist: String,
-  song: String,
+  artist: &str,
+  song: &str,
   config: &State<AppConfig>,
 ) -> Json<SingleSongResponse> {
-  let decoded_artist = urlencoding::decode(&artist)
+  let decoded_artist = urlencoding::decode(artist)
     .map(|s| s.into_owned())
-    .unwrap_or(artist.clone());
+    .unwrap_or_else(|_| artist.to_string());
 
-  match config.catalog.find_track(&decoded_artist, &song) {
+  match config.catalog.find_track(&decoded_artist, song) {
     Some(track) => {
       let file_name = track
         .path
@@ -322,8 +322,8 @@ fn get_song(
     None => Json(SingleSongResponse {
       data: SingleSong {
         id: 0,
-        title: song.clone(),
-        slug: song.clone(),
+        title: song.to_string(),
+        slug: song.to_string(),
         track_artist: decoded_artist,
         lyrics: String::new(),
         src: String::new(),
@@ -334,10 +334,10 @@ fn get_song(
 }
 
 #[get("/artists/<artist>")]
-fn get_artist_info(artist: String) -> Json<ArtistInfoResponse> {
-  let decoded = urlencoding::decode(&artist)
+fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
+  let decoded = urlencoding::decode(artist)
     .map(|s| s.into_owned())
-    .unwrap_or(artist);
+    .unwrap_or_else(|_| artist.to_string());
   Json(ArtistInfoResponse {
     data: ArtistInfo {
       name: decoded.clone(),
@@ -368,12 +368,12 @@ async fn catch_all(_path: PathBuf) -> Option<rocket::fs::NamedFile> {
 // — it carries slugs, not filesystem paths.
 #[get("/<artist>/<song>", rank = 5)]
 async fn get_music_file(
-  artist: String,
-  song: String,
+  artist: &str,
+  song: &str,
   config: &State<AppConfig>,
 ) -> Option<FileWithRanges> {
-  let decoded_artist = urlencoding::decode(&artist).ok()?.into_owned();
-  let track = config.catalog.find_track(&decoded_artist, &song)?;
+  let decoded_artist = urlencoding::decode(artist).ok()?.into_owned();
+  let track = config.catalog.find_track(&decoded_artist, song)?;
   let named_file = rocket::fs::NamedFile::open(&track.path).await.ok()?;
   Some(FileWithRanges(named_file))
 }
