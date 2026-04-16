@@ -59,9 +59,9 @@ The API will be available at http://localhost:7313 by default.
 ## Front-end Development
 
 The front-end uses vanilla JavaScript
-with the DOMinate utility for DOM manipulation.
-The source files are written in TypeScript,
-which is then compiled to JavaScript with `make build`.
+with the [shaven](https://shaven.ad-si.com/) utility for DOM manipulation.
+Sources in `frontend/public/js/` are written in TypeScript
+and compiled to JavaScript with `make build`.
 
 
 ## Related

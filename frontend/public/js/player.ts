@@ -63,7 +63,7 @@ function initPlayer () {
 
   const controlsEl = document.getElementById("controls")
   if (controlsEl) {
-    DOMinate(
+    shaven(
       [controlsEl,
         ["button#previous"],
         ["button#play", {"class": "paused"}],
@@ -297,7 +297,7 @@ function showQueue(): void {
     }
 
     playlist.forEach(function(song) {
-      DOMinate(
+      shaven(
         [currentQueueEl,
           ["div#.row",
             ["a", song.title]

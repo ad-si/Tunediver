@@ -11,7 +11,13 @@ function $(id: string): HTMLElement {
 }
 
 // DOM element creation/manipulation function (externally defined)
-declare function DOMinate(a: any[], ns?: string): HTMLElement
+declare function shaven(a: any[] | object): {
+  rootElement: HTMLElement
+  0: HTMLElement
+  ids: Record<string, HTMLElement>
+  references: Record<string, HTMLElement>
+  toString(): string
+}
 
 // Global variables
 const baseURL = ""
@@ -163,7 +169,7 @@ const printObj = {
           return 0
         })
         .forEach((artist) => {
-        const link = DOMinate(["a", artist.name])
+        const link = shaven(["a", artist.name]).rootElement
 
         link.addEventListener("click", (e: Event) => {
           e.preventDefault()
@@ -178,13 +184,13 @@ const printObj = {
           history.pushState({"url": artist.slug}, artist.slug, baseURL + "/" + artist.slug)
         })
 
-        const container = DOMinate(
+        const container = shaven(
           ["div#.row", {
             "title": artist.name},
             [link],
             ["button", ""]
           ]
-        )
+        ).rootElement
 
         $("c2").appendChild(container)
       })
@@ -196,7 +202,7 @@ const printObj = {
     ajax<Artist>(`/artists/${slug}`, (artist) => {
       $("c4").innerHTML = ""
 
-      DOMinate(
+      shaven(
         [$("c4"),
           ["div#artist",
             ["img", {
@@ -230,12 +236,12 @@ const printObj = {
           artist: artistSlug
         }
 
-        const link = DOMinate(["a", song.title])
-        const play = DOMinate(["button#.play"])
-        const add = DOMinate(["button#.add"])
+        const link = shaven(["a", song.title]).rootElement
+        const play = shaven(["button#.play"]).rootElement
+        const add = shaven(["button#.add"]).rootElement
 
         // Create the song element with the data-id attribute
-        DOMinate(
+        shaven(
           [$("c3"),
             ["div#.row", { "data-song-id": songId },
               [play],
@@ -329,7 +335,7 @@ const printObj = {
       }
 
       // Create song detail view with data-id attribute
-      const songDetailDiv = DOMinate(
+      const songDetailDiv = shaven(
         [$("c4"),
           ["div#song", {"data-song-id": detailSongId},
             ["button#playSong", "Play"],
@@ -347,7 +353,7 @@ const printObj = {
             ["pre#lyrics", songData.lyrics || ""],
           ]
         ]
-      )
+      ).rootElement
 
       // Use event delegation for detail view too
       const container = $("c4")
@@ -403,7 +409,7 @@ const printObj = {
   },
 
   startpage(): void {
-    DOMinate(
+    shaven(
       [$("c4"),
         ["h2", "Welcome to Tunediver"]
       ]
@@ -418,7 +424,7 @@ function viewController(): Record<string, Function> {
         toggle("settingsBubble")
       }
 
-      DOMinate(
+      shaven(
         [document.body,
           ["div#wrapper",
             ["nav#nav",

@@ -16,5 +16,8 @@
   "type": "commonjs",
   "devDependencies": {
     "typescript": "^5.4.2"
+  },
+  "dependencies": {
+    "shaven": "^2.1.0"
   }
 }
