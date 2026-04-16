@@ -8,6 +8,11 @@ test:
 	npx tsc --noEmit
 
 
+.PHONY: format
+format:
+	@echo "No TypeScript formatter configured"
+
+
 .PHONY: build
 build: public/js/shaven.js
 	npx tsc
