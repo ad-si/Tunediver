@@ -61,3 +61,31 @@ The front-end uses vanilla JavaScript
 with the DOMinate utility for DOM manipulation.
 The source files are written in TypeScript,
 which is then compiled to JavaScript with `make build`.
+
+
+## Related
+
+### Players
+
+- [Audioling] - Audio player with a focus on self-hosted music server support.
+- [Aural] - Audio file player for macOS, inspired by Winamp.
+- [Harmonoid] - Plays & manages your music library.
+- [Musicat] - Desktop music player and tagger for offline music.
+- [Musicpod] - Music, radio, TV, and podcast desktop player.
+- [Quod Libet] - Music player and music library manager.
+- [Tauon] - Music player for the desktop.
+
+[Audioling]: https://github.com/audioling/audioling
+[Aural]: https://github.com/kartik-venugopal/aural-player
+[Harmonoid]: https://github.com/harmonoid/harmonoid
+[Musicat]: https://github.com/basharovV/musicat
+[Musicpod]: https://github.com/ubuntu-flutter-community/musicpod
+[Quod Libet]: https://github.com/quodlibet/quodlibet
+[Tauon]: https://github.com/Taiko2k/Tauon
+
+
+### Streaming Servers
+
+- [Navidrome] - Music server
+
+[Navidrome]: https://github.com/navidrome/navidrome/

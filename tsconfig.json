@@ -7,9 +7,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true,
-    "lib": ["dom", "es2015"]
+    "lib": [
+      "dom",
+      "es2015"
+    ]
   },
   "include": [
-    "public/js/*.ts"
+    "frontend/public/js/*.ts"
   ]
 }

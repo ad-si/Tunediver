@@ -3,35 +3,25 @@ help: makefile
 	@tail -n +4 makefile | grep ".PHONY"
 
 
-.PHONY: start
-start: build
-	cargo run
-	
-.PHONY: start-with-path
-start-with-path: build
-	@if [ -z "$(MUSIC_PATH)" ]; then \
-		echo "Usage: make start-with-path MUSIC_PATH=/path/to/music"; \
-		exit 1; \
-	fi
-	ROCKET_MUSIC_PATH=$(MUSIC_PATH) cargo run
-
-
 .PHONY: build
-build:
-	npx tsc
-	cargo build
+build: test
+	cd desktop && make build
+	cd frontend && make build
+	cd server && make build
 
 
 .PHONY: test
 test:
-	# Get all artists
-	http GET "http://127.0.0.1:7313/api/artists"
+	cd desktop && make test
+	cd frontend && make test
+	cd server && make test
 
-	# Get artist info
-	http GET "http://127.0.0.1:7313/api/artists/Beatles/"
 
-	# Get songs for a specific artist
-	http GET "http://127.0.0.1:7313/api/artists/Beatles/songs"
+.PHONY: format
+format:
+	cd server && make format
 
-	# Test the 404 error handler
-	http GET "http://127.0.0.1:7313/api/nonexistent"
+
+.PHONY: start
+start:
+	cd server && make start-with-path MUSIC_PATH=$(shell pwd)/example_music

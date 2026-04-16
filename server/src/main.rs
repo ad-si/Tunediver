@@ -242,7 +242,9 @@ fn not_found() -> Json<ErrorResponse> {
 // Catch-all route handler for client-side routing
 #[get("/<_path..>", rank = 100)]
 async fn catch_all(_path: PathBuf) -> Option<rocket::fs::NamedFile> {
-  rocket::fs::NamedFile::open("public/index.html").await.ok()
+  rocket::fs::NamedFile::open("../frontend/public/index.html")
+    .await
+    .ok()
 }
 
 #[get("/<artist>/<song>")]
@@ -325,7 +327,7 @@ fn rocket() -> _ {
   println!("Starting TuneDiver with music path: {}", config.music_path);
 
   rocket::build()
-    .mount("/", FileServer::from("public"))
+    .mount("/", FileServer::from("../frontend/public"))
     .mount(
       "/api",
       routes![
