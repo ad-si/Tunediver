@@ -6,29 +6,39 @@
   -webkit-box-sizing: border-box;
   box-sizing: border-box;
 }
+
 html {
   height: 100%;
 }
+
 button {
   cursor: pointer;
 }
+
 body {
   font: 500 13px/16px "Arial", sans-serif;
   color: #c8c8c8;
   text-shadow: 0 -1px 0px #000;
   height: 100%;
 }
+
 h3 {
   margin: 20px 0 5px 0;
 }
+
 #wrapper {
   overflow: hidden;
   height: 100%;
   margin: 0 auto;
   background: #323232;
   box-shadow: 0px 0px 10px #000;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 160px fit-content(300px) fit-content(300px) minmax(300px, 1fr);
 }
+
 #nav {
+  grid-column: 1 / -1;
   width: 100%;
   background-image: linear-gradient(#3c3c3c, #141414);
   border-bottom: 1px solid #000;
@@ -36,21 +46,26 @@ h3 {
   vertical-align: top;
   color: #8c8c8c;
 }
-#nav > * {
+
+#nav>* {
   display: inline-block;
   line-height: 60px;
 }
+
 #nav button {
   color: inherit;
   background: transparent;
   text-shadow: 0px -1px 0 #000;
 }
+
 #nav button:hover {
   color: #28b4dc;
 }
+
 #nav button:active {
   color: #2090b0;
 }
+
 #logo {
   color: #28b4dc;
   font-weight: 100;
@@ -60,20 +75,24 @@ h3 {
   text-shadow: 0 -1px 0px #000;
   cursor: pointer;
 }
+
 #logo img {
   margin-left: 5px;
   height: 20px;
   width: 20px;
 }
+
 #controls {
   position: absolute;
   left: 200px;
   top: 0px;
 }
-#controls > * {
+
+#controls>* {
   display: inline-block;
   vertical-align: middle;
 }
+
 #play {
   height: 40px;
   width: 40px;
@@ -82,16 +101,19 @@ h3 {
   line-height: 40px;
   font-size: 16px;
 }
+
 #play.playing:before {
   content: "\2759\2759";
   position: relative;
   bottom: 2px;
 }
+
 #play.paused:before {
   content: "\25B6";
   position: relative;
   left: 2px;
 }
+
 #previous,
 #next {
   height: 30px;
@@ -100,6 +122,7 @@ h3 {
   border-radius: 15px;
   font-size: 14px;
 }
+
 #previous:before,
 #next:before {
   letter-spacing: -5px;
@@ -107,29 +130,35 @@ h3 {
   right: 2px;
   bottom: 2px;
 }
+
 #previous:before {
   content: "\25C0\25C0";
 }
+
 #next {
   margin-right: 30px;
 }
+
 #next:before {
   content: "\25B6\25B6";
 }
+
 .inputBar {
   display: inline-block;
   width: 300px;
   height: 8px;
   border-radius: 4px;
   background-image: linear-gradient(#28b4dc, #14788c);
-  box-shadow: 0px 1px rgba(255,255,255,0.2), 0px -1px #000;
+  box-shadow: 0px 1px rgba(255, 255, 255, 0.2), 0px -1px #000;
 }
+
 .inputBar .handler {
   height: 8px;
   width: 8px;
   border-radius: 4px;
   background-image: linear-gradient(#14505a, #143228);
 }
+
 #playerInfo {
   font-size: 11px;
   line-height: 1.2;
@@ -137,18 +166,22 @@ h3 {
   top: 12px;
   left: 8px;
 }
+
 #progress {
   width: 300px;
   margin: 0 4px;
 }
+
 #volume {
   width: 120px;
   margin: 0 4px;
 }
+
 #time,
 #duration {
   vertical-align: middle;
 }
+
 #queue {
   z-index: 10;
   vertical-align: -20%;
@@ -157,23 +190,28 @@ h3 {
   height: 30px;
   margin: 0 5px 0 30px;
 }
+
 #queue:before {
   content: "\2630";
 }
+
 #currentQueue {
   top: 72px;
   left: 385px;
   width: 200px;
   height: 200px;
 }
+
 #currentQueue:before {
   top: -24px;
   right: 28px;
 }
+
 #currentQueue:after {
   top: -20px;
   right: 30px;
 }
+
 #loud,
 #mute {
   height: 18px;
@@ -181,9 +219,11 @@ h3 {
   border-radius: 10px;
   vertical-align: middle;
 }
+
 #mute {
   margin-left: 30px;
 }
+
 #repeat:before {
   content: '\21BA';
   font-size: 20px;
@@ -191,6 +231,7 @@ h3 {
   margin-left: 20px;
   vertical-align: middle;
 }
+
 #shuffle:before {
   content: '\21C4';
   font-size: 20px;
@@ -198,6 +239,7 @@ h3 {
   margin-left: 20px;
   vertical-align: middle;
 }
+
 #share:before {
   content: '\2709';
   font-size: 20px;
@@ -205,48 +247,54 @@ h3 {
   margin-left: 20px;
   vertical-align: middle;
 }
+
 #settings {
   background: transparent;
   position: absolute;
   right: 40px;
 }
+
 #settings:before {
   content: '\2699';
   font-size: 30px;
   height: 50px;
   width: 50 p;
 }
+
 #settingsBubble {
   top: 72px;
   right: 10px;
   width: 200px;
   height: 200px;
 }
+
 #settingsBubble:before {
   top: -24px;
   right: 28px;
 }
+
 #settingsBubble:after {
   top: -20px;
   right: 30px;
 }
+
 #c1,
 #c2,
 #c3,
 #c4 {
-  display: inline-block;
-  vertical-align: top;
-  height: 90%;
   border-left: 1px solid #000;
   overflow-y: auto;
   overflow-x: hidden;
+  min-height: 0;
 }
+
 #c1 {
   border-left: none;
   text-align: center;
   width: 160px;
 }
-#c1 > button {
+
+#c1>button {
   color: #fff;
   text-align: left;
   font-weight: 100;
@@ -258,14 +306,17 @@ h3 {
   border-bottom: 1px solid #1e1e1e;
   cursor: pointer;
   text-shadow: 0 -1px 0 #000;
-  background-color: rgba(230,230,230,0);
+  background-color: rgba(230, 230, 230, 0);
 }
-#c1 > button:hover {
-  background-color: rgba(255,255,255,0.1);
+
+#c1>button:hover {
+  background-color: rgba(255, 255, 255, 0.1);
 }
-#c1 > button:active {
-  background-color: rgba(255,255,255,0.2);
+
+#c1>button:active {
+  background-color: rgba(255, 255, 255, 0.2);
 }
+
 input[type="search"] {
   -webkit-appearance: textfield;
   font: 500 16px/28px "Arial", sans-serif;
@@ -276,91 +327,120 @@ input[type="search"] {
   background-color: #646464;
   margin: 10px 0;
 }
+
 #artists:before {
   content: '\265D';
   margin-right: 5px;
 }
+
 #charts:before {
   content: '\2605';
   margin-right: 5px;
 }
+
 #songs:before {
   content: '\266B';
   margin-right: 5px;
 }
+
 #playlists:before {
   content: '\2665';
   margin-right: 5px;
 }
+
 #info:before {
   font-size: 22px;
   content: '\2295';
   margin-right: 5px;
 }
+
 #c2 {
   padding: 10px 0 0 0;
-  width: 160px;
+  min-width: 160px;
 }
+
 #c3 {
   padding: 10px 0 0 0;
-  width: 200px;
+  min-width: 200px;
 }
+
 .row {
   position: relative;
-  height: 20px;
+  min-height: 20px;
   line-height: 20px;
-  white-space: nowrap;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
+
 .row:nth-of-type(2n) {
-  background-color: rgba(0,0,0,0.06);
+  background-color: rgba(0, 0, 0, 0.06);
 }
+
 .row a {
   cursor: pointer;
-  position: absolute;
-  left: 20px;
+  display: block;
+  height: 100%;
+  padding-left: 40px;
+  padding-right: 20px;
+  text-indent: -20px;
 }
+
 .row button {
   color: #fff;
   background: transparent;
   display: none;
   width: 20px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  z-index: 1;
 }
+
 .row .play:before {
   content: "\25B6";
   position: relative;
   left: 2px;
 }
+
 .row .add:before {
   content: "+";
   position: relative;
   left: 2px;
 }
+
 .row:hover,
 .row.highlight {
-  box-shadow: inset 0 0 20px 20px rgba(40,180,220,0.2);
+  box-shadow: inset 0 0 20px 20px rgba(40, 180, 220, 0.2);
   color: #fff;
 }
+
 .row:hover button,
 .row.highlight button {
   display: inline-block;
 }
+
 #c4 {
   padding: 30px;
-  width: 55%;
+  min-width: 300px;
 }
+
 #c4 img {
   margin: 0 20px 20px 0;
   width: 80px;
   height: 80px;
   display: inline-block;
   border-radius: 3px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   background: image-url('loader.gif') no-repeat center;
 }
+
 #c4 nav {
   display: inline-block;
   vertical-align: top;
 }
+
 #c4 button {
   display: block;
   float: right;
@@ -368,14 +448,18 @@ input[type="search"] {
   border-radius: 2px;
   margin: 4px;
 }
+
 #bio,
 #lyrics {
   font-family: "Times New Roman", serif;
   font-size: 14px;
 }
+
 #heading {
   margin: 0 0 10px 0;
+  line-height: 1.2;
 }
+
 #songs a {
   display: block;
   border: 1px solid #c8c8c8;
@@ -383,14 +467,16 @@ input[type="search"] {
   margin-bottom: 5px;
   background-color: #e6e6e6;
 }
+
 .bubble {
   z-index: 1;
   position: absolute;
   background-image: linear-gradient(#282828, #1e1e1e);
   border-radius: 8px;
-  box-shadow: 2px 2px 8px rgba(0,0,0,0.5), inset 0 2px 5px rgba(255,255,255,0.1);
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.5), inset 0 2px 5px rgba(255, 255, 255, 0.1);
   border: 1px solid #000;
 }
+
 .bubble:before {
   z-index: -1;
   content: '';
@@ -399,6 +485,7 @@ input[type="search"] {
   border-width: 12px;
   position: absolute;
 }
+
 .bubble:after {
   z-index: -1;
   content: '';
@@ -407,11 +494,14 @@ input[type="search"] {
   border-width: 10px;
   position: absolute;
 }
+
 @media all and (max-width: 480px) {
   #wrapper {
     width: 100%;
     height: 200%;
+    display: block;
   }
+
   #c1,
   #c2,
   #c3,
@@ -419,17 +509,21 @@ input[type="search"] {
     width: 100%;
     display: block;
   }
+
   #c1 {
     height: 30%;
     width: 100%;
   }
+
   #c2 {
     height: 30%;
     width: 80%;
   }
+
   #c3 {
     width: 20%;
   }
+
   #c4 {
     width: 80%;
     height: 30%;
