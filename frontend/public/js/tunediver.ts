@@ -128,7 +128,10 @@ function playSong(
     if (autoplay) {
       playpause()
     }
-    $("playerInfo").innerHTML = decodeURI(artistName).replace("+", " ") + " - " + song.title
+    // Player info is Artist - Title, both taken from the audio file's
+    // embedded tags (track_artist / title). Use textContent so tag values
+    // that happen to contain HTML-special characters are rendered as text.
+    $("playerInfo").textContent = (song.track_artist || "") + " - " + song.title
 
     // Update URL only if explicitly requested
     if (updateUrl && song.slug) {

@@ -184,6 +184,7 @@ fn track_to_song(track: &Track) -> Song {
     title: track.title.clone(),
     slug: encode(&track.title),
     src: format!("/api/{}/{}", encode(&track.artist), encode(&track.title)),
+    track_artist: track.artist.clone(),
   }
 }
 
@@ -209,6 +210,7 @@ struct Song {
   title: String,
   slug: String,
   src: String,
+  track_artist: String,
 }
 
 #[derive(Serialize)]
