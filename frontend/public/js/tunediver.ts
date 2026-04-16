@@ -36,7 +36,12 @@ function toggle(id: string): void {
 }
 
 // Helper function to play a song - centralized to improve reliability
-function playSong(song: Song, artistName: string, updateUrl: boolean = false): void {
+function playSong(
+  song: Song,
+  artistName: string,
+  updateUrl: boolean = false,
+  autoplay: boolean = true,
+): void {
   if (!song || song.src === "") {
     console.error("No source available for the song")
     return
@@ -80,8 +85,10 @@ function playSong(song: Song, artistName: string, updateUrl: boolean = false): v
     // Now replace the global audio instance
     audio = newAudio
 
-    // Update UI and start playing
-    playpause()
+    // Update UI and optionally start playing
+    if (autoplay) {
+      playpause()
+    }
     $("playerInfo").innerHTML = decodeURI(artistName).replace("+", " ") + " - " + song.title
 
     // Update URL only if explicitly requested
@@ -92,6 +99,30 @@ function playSong(song: Song, artistName: string, updateUrl: boolean = false): v
   } catch (e) {
     console.error("Error playing song:", e)
   }
+}
+
+// Pick a random artist and a random song from that artist, then pre-load
+// it in the player without starting playback. Retries with a different
+// artist if the picked one has no listable songs.
+function loadRandomSong(): void {
+  ajax<Artist[]>("/artists", (artists) => {
+    tryRandomArtist(artists.slice())
+  })
+}
+
+function tryRandomArtist(remaining: Artist[]): void {
+  if (!remaining.length) return
+  const idx = Math.floor(Math.random() * remaining.length)
+  const artist = remaining[idx]
+  ajax<Song[]>(`/artists/${artist.slug}/songs`, (songs) => {
+    if (songs.length) {
+      const song = songs[Math.floor(Math.random() * songs.length)]
+      playSong(song, artist.slug, false, false)
+    } else {
+      remaining.splice(idx, 1)
+      tryRandomArtist(remaining)
+    }
+  })
 }
 
 function highlight(element: HTMLElement): void {
@@ -604,6 +635,12 @@ history.replaceState({"url": path}, path, baseURL + "/" + path)
 // Apply initial routing
 route(path)
 setShortcuts()
+
+// Pre-load a random song when landing on the root URL so the user can
+// start listening with a single play click.
+if (path === "") {
+  loadRandomSong()
+}
 
 //Popstate
 window.addEventListener("popstate", (event: PopStateEvent) => {
