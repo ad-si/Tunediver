@@ -86,11 +86,14 @@ fn read_track_tags(path: &Path) -> (String, String) {
 }
 
 // Look up lyrics from whichever tag the file carries, if any.
+// ID3v2 USLT frames surface as `UnsyncLyrics`, while other formats
+// (e.g. Vorbis comments, MP4 atoms) use `Lyrics`, so try both.
 fn read_track_lyrics(path: &Path) -> Option<String> {
   let tagged = read_from_path(path).ok()?;
   let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
   tag
-    .get_string(lofty::tag::ItemKey::Lyrics)
+    .get_string(lofty::tag::ItemKey::UnsyncLyrics)
+    .or_else(|| tag.get_string(lofty::tag::ItemKey::Lyrics))
     .map(|s| s.to_string())
 }
 
