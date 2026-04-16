@@ -2,9 +2,9 @@
 
 ## Build Commands
 
-- `make build` - Builds TypeScript and Rust components
-- `make start` - Builds and starts the application server
-- `make start-with-path MUSIC_PATH=/path/to/music` - Starts server with custom music path
+- `make build` - Builds all packages (desktop is currently a stub)
+- `make start` - Runs the server against `./example_music`
+- `cd server && make start-with-path MUSIC_PATH=/path/to/music` - Runs the server with a custom music path
 
 
 ## Test Commands
@@ -32,10 +32,11 @@
 
 ## Project Structure
 
-- Frontend: TypeScript in public/js/, styles in styles/ (Stylus)
-- Backend: Rust server in src/, API endpoints in main.rs
-- Assets: Store in public/img/ and design/
-- Music: Default in ./music directory, configurable via MUSIC_PATH
+- `frontend/` — TypeScript sources in `public/js/`, plain CSS in `public/css/`, assets in `public/img/`
+- `server/` — Rust/Rocket backend in `src/main.rs`; config in `Rocket.toml`
+- `desktop/` — Tauri 2 scaffold, not yet integrated
+- `design/` — design assets
+- Music path: default in `server/Rocket.toml`, overridable via `ROCKET_MUSIC_PATH` env var or `MUSIC_PATH` makefile arg; top-level `make start` uses `./example_music/`
 
 
 ## Development Workflow

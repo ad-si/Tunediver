@@ -13,10 +13,11 @@ It provides endpoints to access and manage your local music collection.
 
 ### Endpoints
 
-- Artists: `/music.php?artists=true`
-- Songs of Artist: `/music.php?artist=<artist_name>&songs=true`
-- Song: `/music.php?artist=<artist_name>&song=<song_name>`
-- Artist Info: `/music.php?artist=<artist_name>`
+- List artists: `GET /api/artists`
+- Songs by artist: `GET /api/artists/<artist>/songs`
+- Single song: `GET /api/artists/<artist>/songs/<song>`
+- Artist info: `GET /api/artists/<artist>`
+- Stream audio file: `GET /<artist>/<song>` (Range requests supported)
 
 
 ### Building and Running
@@ -34,25 +35,25 @@ It provides endpoints to access and manage your local music collection.
 
 ### Configuring Music Path
 
-You can configure the music directory path in several ways:
+The top-level `make start` runs the server against `./example_music`.
+To use your own path:
 
-1. Using the makefile target:
-   ```sh
-   make start-with-path MUSIC_PATH=/path/to/your/music
-   ```
+```sh
+cd server && make start-with-path MUSIC_PATH=/path/to/your/music
+```
 
-2. Using environment variables:
-   ```sh
-   ROCKET_MUSIC_PATH=/path/to/your/music cargo run
-   ```
-
-3. By editing the `Rocket.toml` file:
-   ```toml
-   [default]
-   music_path = "/path/to/your/music"
-   ```
+You can also set `ROCKET_MUSIC_PATH` directly,
+or edit `music_path` in `server/Rocket.toml`.
 
 The API will be available at http://localhost:7313 by default.
+
+
+## Project Structure
+
+- `frontend/` — TypeScript webapp (`public/js/`), plain CSS (`public/css/`), assets (`public/img/`)
+- `server/` — Rust/Rocket backend (`src/main.rs`, config in `Rocket.toml`)
+- `desktop/` — Tauri 2 scaffold (not yet integrated)
+- `design/` — design assets
 
 
 ## Front-end Development
