@@ -173,6 +173,16 @@ function initPlayer () {
       loudEl.addEventListener("click", () => setVolume(1), false)
     }
 
+    const playerInfoEl = document.getElementById("playerInfo")
+    if (playerInfoEl) {
+      playerInfoEl.addEventListener("click", () => {
+        if (!currentlyPlaying) return
+        const url = currentlyPlaying.artistSlug + "/" + currentlyPlaying.songSlug
+        history.pushState({"url": url}, currentlyPlaying.songSlug, baseURL + "/" + url)
+        route(url)
+      })
+    }
+
     const shareEl = document.getElementById("share")
     if (shareEl) {
       shareEl.addEventListener("click", () => {
