@@ -44,8 +44,8 @@ test: build
 	echo "# Get all artists"; \
 	http GET "http://127.0.0.1:$(TEST_PORT)/api/artists"; \
 	echo "# Get artist info"; \
-	http GET "http://127.0.0.1:$(TEST_PORT)/api/artists/Aquanaut/"; \
+	http GET "http://127.0.0.1:$(TEST_PORT)/api/artists/Fred/"; \
 	echo "# Get songs for a specific artist"; \
-	http GET "http://127.0.0.1:$(TEST_PORT)/api/artists/Aquanaut/songs"; \
+	http GET "http://127.0.0.1:$(TEST_PORT)/api/artists/Fred/songs"; \
 	echo "# Test the 404 error handler"; \
 	http GET "http://127.0.0.1:$(TEST_PORT)/api/nonexistent"

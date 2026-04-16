@@ -3,18 +3,38 @@ extern crate rocket;
 use rocket::fs::FileServer;
 use rocket::serde::{json::Json, Serialize};
 use rocket::State;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// We'll replace the constant with configuration
-#[derive(Debug)]
-struct AppConfig {
-  music_path: String,
+use lofty::file::TaggedFileExt;
+use lofty::read_from_path;
+use lofty::tag::Accessor;
+
+// Files whose tags are missing or unreadable surface under these labels
+// instead of borrowing identity from the on-disk filename or path.
+const UNKNOWN_ARTIST: &str = "Unknown Artist";
+const UNKNOWN_TITLE: &str = "Unknown Title";
+
+// In-memory catalog entry: the authoritative description of a track comes
+// from its embedded tag data, not from the directory structure.
+#[derive(Debug, Clone)]
+struct Track {
+  id: usize,
+  artist: String,
+  title: String,
+  path: PathBuf,
 }
 
-// Virtual artist used for audio files that live directly in MUSIC_PATH
-// rather than inside an artist subdirectory.
-const VARIOUS_ARTISTS: &str = "Various Artists";
+#[derive(Debug)]
+struct Catalog {
+  tracks: Vec<Track>,
+}
+
+#[derive(Debug)]
+struct AppConfig {
+  catalog: Catalog,
+}
 
 // Helper function to check if a file is an audio file. Includes a few
 // container formats (mp4, m4v, webm) that often hold music videos — the
@@ -25,44 +45,58 @@ fn is_audio_file(filename: &str) -> bool {
     ".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".wma", ".aiff", ".alac",
     ".opus", ".mp4", ".m4v", ".webm",
   ];
-
-  for ext in extensions.iter() {
-    if filename.to_lowercase().ends_with(ext) {
-      return true;
-    }
-  }
-  false
+  let lower = filename.to_lowercase();
+  extensions.iter().any(|ext| lower.ends_with(ext))
 }
 
-// Strip the extension from a filename, returning the bare title.
-fn strip_ext(name: &str) -> String {
-  match name.rfind('.') {
-    Some(pos) => name[..pos].to_string(),
-    None => name.to_string(),
-  }
+// URL-encode a single path segment.
+fn encode(segment: &str) -> String {
+  urlencoding::encode(segment).to_string()
 }
 
-// URL-encode each path segment individually so slashes are preserved as
-// path separators in the resulting URL.
-fn encode_path(rel: &str) -> String {
-  rel
-    .split('/')
-    .map(|seg| urlencoding::encode(seg).to_string())
-    .collect::<Vec<_>>()
-    .join("/")
+// Read artist and title from the file's embedded tags. Falls back to
+// "Unknown Artist" / "Unknown Title" when tags are missing or unreadable;
+// never consults the filename or directory name.
+fn read_track_tags(path: &Path) -> (String, String) {
+  let tagged = match read_from_path(path) {
+    Ok(t) => t,
+    Err(_) => return (UNKNOWN_ARTIST.to_string(), UNKNOWN_TITLE.to_string()),
+  };
+
+  let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+  let (artist, title) = match tag {
+    Some(t) => (
+      t.artist().map(|s| s.to_string()).unwrap_or_default(),
+      t.title().map(|s| s.to_string()).unwrap_or_default(),
+    ),
+    None => (String::new(), String::new()),
+  };
+
+  let artist = if artist.trim().is_empty() {
+    UNKNOWN_ARTIST.to_string()
+  } else {
+    artist
+  };
+  let title = if title.trim().is_empty() {
+    UNKNOWN_TITLE.to_string()
+  } else {
+    title
+  };
+  (artist, title)
 }
 
-// Recursively walk `current` and append every audio file found to `songs`,
-// flattening any subdirectory structure into a single song list. The `src`
-// URL is built from the path relative to `artist_root`.
-fn walk_audio(
-  current: &Path,
-  artist_root: &Path,
-  artist_slug: &str,
-  songs: &mut Vec<Song>,
-  counter: &mut usize,
-) {
-  let entries = match fs::read_dir(current) {
+// Look up lyrics from whichever tag the file carries, if any.
+fn read_track_lyrics(path: &Path) -> Option<String> {
+  let tagged = read_from_path(path).ok()?;
+  let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+  tag
+    .get_string(lofty::tag::ItemKey::Lyrics)
+    .map(|s| s.to_string())
+}
+
+// Recursively collect every audio file under `dir`.
+fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) {
+  let entries = match fs::read_dir(dir) {
     Ok(e) => e,
     Err(_) => return,
   };
@@ -73,79 +107,81 @@ fn walk_audio(
       Err(_) => continue,
     };
     if file_type.is_dir() {
-      walk_audio(&path, artist_root, artist_slug, songs, counter);
+      collect_audio_files(&path, out);
     } else if file_type.is_file() {
-      let name = match entry.file_name().into_string() {
-        Ok(n) => n,
-        Err(_) => continue,
-      };
-      if !is_audio_file(&name) {
-        continue;
+      if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if is_audio_file(name) {
+          out.push(path);
+        }
       }
-      let title = strip_ext(&name);
-      let rel_path = path
-        .strip_prefix(artist_root)
-        .ok()
-        .and_then(|p| p.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| name.clone());
-      songs.push(Song {
-        id: *counter,
-        title: title.clone(),
-        slug: urlencoding::encode(&title).to_string(),
-        src: format!("/api/{}/{}", artist_slug, encode_path(&rel_path)),
-      });
-      *counter += 1;
     }
   }
 }
 
-// Find the first audio file under `root` whose title (filename without
-// extension) matches `title`. Returns (relative path, filename).
-fn find_song_in_dir(
-  root: &Path,
-  title: &str,
-  recursive: bool,
-) -> Option<(String, String)> {
-  fn walk(
-    root: &Path,
-    current: &Path,
-    title: &str,
-    recursive: bool,
-  ) -> Option<(String, String)> {
-    let entries = fs::read_dir(current).ok()?;
-    for entry in entries.flatten() {
-      let file_type = match entry.file_type() {
-        Ok(t) => t,
-        Err(_) => continue,
-      };
-      let path = entry.path();
-      if file_type.is_file() {
-        let name = match entry.file_name().into_string() {
-          Ok(n) => n,
-          Err(_) => continue,
-        };
-        if !is_audio_file(&name) {
-          continue;
-        }
-        if strip_ext(&name) == title {
-          let rel = path
-            .strip_prefix(root)
-            .ok()
-            .and_then(|p| p.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| name.clone());
-          return Some((rel, name));
-        }
-      } else if file_type.is_dir() && recursive {
-        if let Some(found) = walk(root, &path, title, recursive) {
-          return Some(found);
-        }
-      }
-    }
-    None
+// Scan `music_path` for audio files and build the tag-driven catalog.
+// Paths and filenames only serve as a way to *locate* the files on disk;
+// all user-visible metadata comes from the tags.
+fn build_catalog(music_path: &Path) -> Catalog {
+  let mut paths = Vec::new();
+  collect_audio_files(music_path, &mut paths);
+  // Sort so the catalog ordering is deterministic across restarts.
+  paths.sort();
+
+  let mut tracks = Vec::with_capacity(paths.len());
+  for (id, path) in paths.into_iter().enumerate() {
+    let (artist, title) = read_track_tags(&path);
+    tracks.push(Track {
+      id,
+      artist,
+      title,
+      path,
+    });
   }
-  walk(root, root, title, recursive)
+  Catalog { tracks }
+}
+
+impl Catalog {
+  // Unique artists, sorted alphabetically (case-insensitive) via BTreeSet
+  // ordering. IDs are sequential in the returned slice.
+  fn list_artists(&self) -> Vec<Artist> {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for track in &self.tracks {
+      names.insert(track.artist.clone());
+    }
+    names
+      .into_iter()
+      .enumerate()
+      .map(|(i, name)| Artist {
+        id: i,
+        slug: encode(&name),
+        name,
+      })
+      .collect()
+  }
+
+  // Tracks belonging to `artist`, in catalog order.
+  fn tracks_by_artist(&self, artist: &str) -> Vec<&Track> {
+    self.tracks.iter().filter(|t| t.artist == artist).collect()
+  }
+
+  // Find a track by artist + url-encoded title. If multiple tracks share
+  // the same artist and title, the first one in catalog order wins.
+  fn find_track(&self, artist: &str, title_slug: &str) -> Option<&Track> {
+    let decoded = urlencoding::decode(title_slug).ok()?;
+    self
+      .tracks
+      .iter()
+      .find(|t| t.artist == artist && t.title == decoded)
+  }
+}
+
+fn track_to_song(track: &Track) -> Song {
+  Song {
+    id: track.id,
+    title: track.title.clone(),
+    slug: encode(&track.title),
+    src: format!("/api/{}/{}", encode(&track.artist), encode(&track.title)),
+  }
 }
 
 #[derive(Serialize)]
@@ -219,48 +255,9 @@ struct ErrorResponse {
 
 #[get("/artists")]
 fn get_artists(config: &State<AppConfig>) -> Json<ArtistResponse> {
-  let mut artists = Vec::new();
-  let path = Path::new(&config.music_path);
-  let mut has_root_audio = false;
-
-  if let Ok(entries) = fs::read_dir(path) {
-    for (i, entry) in entries.enumerate() {
-      if let Ok(entry) = entry {
-        if let Ok(file_type) = entry.file_type() {
-          if file_type.is_dir() {
-            if let Ok(name) = entry.file_name().into_string() {
-              if !name.contains('.') && !name.contains(':') {
-                artists.push(Artist {
-                  id: i,
-                  name: name.clone(),
-                  slug: urlencoding::encode(&name).to_string(),
-                });
-              }
-            }
-          } else if file_type.is_file() {
-            if let Ok(name) = entry.file_name().into_string() {
-              if is_audio_file(&name) {
-                has_root_audio = true;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if has_root_audio {
-    let next_id = artists.iter().map(|a| a.id).max().map_or(0, |m| m + 1);
-    artists.push(Artist {
-      id: next_id,
-      name: VARIOUS_ARTISTS.to_string(),
-      slug: urlencoding::encode(VARIOUS_ARTISTS).to_string(),
-    });
-  }
-
   Json(ArtistResponse {
     error: false,
-    data: artists,
+    data: config.catalog.list_artists(),
   })
 }
 
@@ -269,52 +266,16 @@ fn get_artist_songs(
   artist: String,
   config: &State<AppConfig>,
 ) -> Json<SongResponse> {
-  let mut songs = Vec::new();
-  let mut counter: usize = 0;
-  let base = Path::new(&config.music_path);
-  let artist_slug = urlencoding::encode(&artist).to_string();
+  let decoded_artist = urlencoding::decode(&artist)
+    .map(|s| s.into_owned())
+    .unwrap_or(artist);
 
-  if artist == VARIOUS_ARTISTS {
-    // For the virtual "Various Artists" entry, list only audio files that
-    // sit directly in MUSIC_PATH (no recursion into real artist folders).
-    if let Ok(entries) = fs::read_dir(base) {
-      for entry in entries.flatten() {
-        let file_type = match entry.file_type() {
-          Ok(t) => t,
-          Err(_) => continue,
-        };
-        if !file_type.is_file() {
-          continue;
-        }
-        let name = match entry.file_name().into_string() {
-          Ok(n) => n,
-          Err(_) => continue,
-        };
-        if !is_audio_file(&name) {
-          continue;
-        }
-        let title = strip_ext(&name);
-        songs.push(Song {
-          id: counter,
-          title: title.clone(),
-          slug: urlencoding::encode(&title).to_string(),
-          src: format!("/api/{}/{}", artist_slug, urlencoding::encode(&name)),
-        });
-        counter += 1;
-      }
-    }
-  } else {
-    // Recursively walk the artist directory and flatten any nested
-    // subfolders into a single song list.
-    let artist_path = base.join(&artist);
-    walk_audio(
-      &artist_path,
-      &artist_path,
-      &artist_slug,
-      &mut songs,
-      &mut counter,
-    );
-  }
+  let songs = config
+    .catalog
+    .tracks_by_artist(&decoded_artist)
+    .into_iter()
+    .map(track_to_song)
+    .collect();
 
   Json(SongResponse { data: songs })
 }
@@ -325,45 +286,59 @@ fn get_song(
   song: String,
   config: &State<AppConfig>,
 ) -> Json<SingleSongResponse> {
-  let title = if song.contains('.') {
-    strip_ext(&song)
-  } else {
-    song.clone()
-  };
+  let decoded_artist = urlencoding::decode(&artist)
+    .map(|s| s.into_owned())
+    .unwrap_or(artist.clone());
 
-  let base = Path::new(&config.music_path);
-  let (search_root, recursive): (PathBuf, bool) = if artist == VARIOUS_ARTISTS {
-    (base.to_path_buf(), false)
-  } else {
-    (base.join(&artist), true)
-  };
+  match config.catalog.find_track(&decoded_artist, &song) {
+    Some(track) => {
+      let file_name = track
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+      let lyrics = read_track_lyrics(&track.path).unwrap_or_default();
 
-  // Look up the matching file (with extension) by title.
-  let (rel_path, actual_filename) =
-    find_song_in_dir(&search_root, &title, recursive)
-      .unwrap_or_else(|| (song.clone(), song.clone()));
-
-  let artist_slug = urlencoding::encode(&artist).to_string();
-
-  Json(SingleSongResponse {
-    data: SingleSong {
-      id: 1,
-      title: title.clone(),
-      slug: urlencoding::encode(&title).to_string(),
-      track_artist: artist.clone(),
-      lyrics: "This are the lyrics of the Song".to_string(),
-      src: format!("/api/{}/{}", artist_slug, encode_path(&rel_path)),
-      file_name: actual_filename,
-    },
-  })
+      Json(SingleSongResponse {
+        data: SingleSong {
+          id: track.id,
+          title: track.title.clone(),
+          slug: encode(&track.title),
+          track_artist: track.artist.clone(),
+          lyrics,
+          src: format!(
+            "/api/{}/{}",
+            encode(&track.artist),
+            encode(&track.title)
+          ),
+          file_name,
+        },
+      })
+    }
+    None => Json(SingleSongResponse {
+      data: SingleSong {
+        id: 0,
+        title: song.clone(),
+        slug: song.clone(),
+        track_artist: decoded_artist,
+        lyrics: String::new(),
+        src: String::new(),
+        file_name: String::new(),
+      },
+    }),
+  }
 }
 
 #[get("/artists/<artist>")]
 fn get_artist_info(artist: String) -> Json<ArtistInfoResponse> {
+  let decoded = urlencoding::decode(&artist)
+    .map(|s| s.into_owned())
+    .unwrap_or(artist);
   Json(ArtistInfoResponse {
     data: ArtistInfo {
-      name: artist.to_string(),
-      bio: format!("This is the bio of {}", artist),
+      name: decoded.clone(),
+      bio: format!("This is the bio of {}", decoded),
       country: "Someland".to_string(),
     },
   })
@@ -385,41 +360,19 @@ async fn catch_all(_path: PathBuf) -> Option<rocket::fs::NamedFile> {
     .ok()
 }
 
-#[get("/<artist>/<song..>", rank = 5)]
+// Serve the audio file for a given artist+song slug by resolving to the
+// actual file path via the catalog. The URL shape is intentionally opaque
+// — it carries slugs, not filesystem paths.
+#[get("/<artist>/<song>", rank = 5)]
 async fn get_music_file(
   artist: String,
-  song: PathBuf,
+  song: String,
   config: &State<AppConfig>,
 ) -> Option<FileWithRanges> {
-  let base = Path::new(&config.music_path);
-  let search_root = if artist == VARIOUS_ARTISTS {
-    base.to_path_buf()
-  } else {
-    base.join(&artist)
-  };
-
-  // First try the direct path (works for nested paths with an extension).
-  let direct_path = search_root.join(&song);
-  if direct_path.exists() {
-    if let Ok(named_file) = rocket::fs::NamedFile::open(&direct_path).await {
-      return Some(FileWithRanges(named_file));
-    }
-  }
-
-  // Fallback: legacy URL with title only (no extension). Search by title.
-  let song_str = song.to_str()?;
-  if !song_str.contains('.') {
-    let recursive = artist != VARIOUS_ARTISTS;
-    if let Some((rel, _)) = find_song_in_dir(&search_root, song_str, recursive)
-    {
-      let file_path = search_root.join(&rel);
-      if let Ok(named_file) = rocket::fs::NamedFile::open(&file_path).await {
-        return Some(FileWithRanges(named_file));
-      }
-    }
-  }
-
-  None
+  let decoded_artist = urlencoding::decode(&artist).ok()?.into_owned();
+  let track = config.catalog.find_track(&decoded_artist, &song)?;
+  let named_file = rocket::fs::NamedFile::open(&track.path).await.ok()?;
+  Some(FileWithRanges(named_file))
 }
 
 // Custom responder that wraps NamedFile and adds Accept-Ranges header
@@ -445,9 +398,14 @@ fn rocket() -> _ {
     .extract_inner("music_path")
     .unwrap_or_else(|_| String::from("music"));
 
-  let config = AppConfig { music_path };
+  println!("Starting TuneDiver with music path: {}", music_path);
+  let catalog = build_catalog(Path::new(&music_path));
+  println!(
+    "Indexed {} track(s) from tag metadata",
+    catalog.tracks.len()
+  );
 
-  println!("Starting TuneDiver with music path: {}", config.music_path);
+  let config = AppConfig { catalog };
 
   rocket::build()
     .mount("/", FileServer::from("../frontend/public"))
