@@ -263,12 +263,12 @@ fn get_artists(config: &State<AppConfig>) -> Json<ArtistResponse> {
 
 #[get("/artists/<artist>/songs")]
 fn get_artist_songs(
-  artist: String,
+  artist: &str,
   config: &State<AppConfig>,
 ) -> Json<SongResponse> {
-  let decoded_artist = urlencoding::decode(&artist)
+  let decoded_artist = urlencoding::decode(artist)
     .map(|s| s.into_owned())
-    .unwrap_or(artist);
+    .unwrap_or_else(|_| artist.to_string());
 
   let songs = config
     .catalog
