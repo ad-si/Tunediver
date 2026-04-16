@@ -28,6 +28,12 @@ const playlist: Song[] = []
 // in the artist (c2) and song (c3) columns can be marked as playing.
 let currentlyPlaying: { artistSlug: string, songSlug: string } | null = null
 
+// Which top-level tab is currently active. Drives neighbour navigation
+// (prev/next buttons and auto-advance when a song ends):
+//   "artists" → neighbour is the prev/next song by the same artist
+//   "songs"   → neighbour is the prev/next entry in the flat songs list
+let currentTab: "artists" | "songs" = "artists"
+
 // Add/remove the `.playing` CSS class on artist and song rows so the
 // currently playing track is visually highlighted in the columns.
 // Called whenever the playback state or the rendered lists change.
@@ -111,6 +117,9 @@ function playSong(
       newAudio.currentTime = 0
       playerUpdater()
       updatePlayingMarkers()
+      // Auto-advance to the next neighbour in the active tab's list.
+      // No-op if nothing is queued after the current song.
+      playAdjacentSong(1)
     }, false)
 
     // Set the volume to match the current volume
@@ -143,12 +152,28 @@ function playSong(
   }
 }
 
-// Play the song adjacent to the currently playing one within the same
-// artist. `direction` is +1 for next, -1 for previous. No-op if nothing
-// is playing, or if there is no neighbour in the requested direction.
+// Play the song adjacent to the currently playing one. `direction` is +1
+// for next, -1 for previous. The source list depends on the active tab:
+// in the Artists tab we step through the current artist's songs; in the
+// Songs tab we step through the flat, alphabetical all-songs list. No-op
+// if nothing is playing, or if there is no neighbour in that direction.
 function playAdjacentSong(direction: 1 | -1): void {
   if (!currentlyPlaying) return
   const { artistSlug, songSlug } = currentlyPlaying
+
+  if (currentTab === "songs") {
+    ajax<Song[]>("/songs", (songs) => {
+      const idx = songs.findIndex((s) =>
+        s.slug === songSlug && (s.artist_slug || "") === artistSlug
+      )
+      if (idx === -1) return
+      const target = songs[idx + direction]
+      if (!target) return
+      playSong(target, target.artist_slug || "", false)
+    })
+    return
+  }
+
   ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
     const idx = songs.findIndex((s) => s.slug === songSlug)
     if (idx === -1) return
@@ -272,6 +297,7 @@ function ajax<T>(
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
+    currentTab = "artists"
     $("c2").style.display = "inline-block"
     // Restore c3 in case the "Songs" tab had hidden it
     $("c3").style.display = ""
@@ -562,6 +588,7 @@ const printObj = {
   // c2. c3 is hidden because this view has no "second column" — clicking
   // a song jumps straight to its detail in c4, double-clicking plays it.
   allSongs(): void {
+    currentTab = "songs"
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""
