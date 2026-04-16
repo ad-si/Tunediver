@@ -224,9 +224,9 @@ function highlight(element: HTMLElement): void {
   if (!containerEl) return
   const rows = containerEl.getElementsByClassName("row")
   for (let i = 0; i < rows.length; i++) {
-    rows[i].className = "row"
+    rows[i].classList.remove("highlight")
   }
-  element.className = "highlight row"
+  element.classList.add("highlight")
 }
 
 // Move the highlight in c3 (preferred) or c2 by `direction` (+1 or -1) and
