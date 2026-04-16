@@ -1,12 +1,5 @@
-:root {
-  --primary-color: #28b4dc;
-  --secondary-color: #14788c;
-  --highlight-color: #aaeeff;
-  --shadow-color: rgba(0, 0, 0, 0.6);
-  --light-shadow-color: rgba(255, 255, 255, 0.2);
-  --dark-shadow-color: #000;
-  --background-color: #323232;
-}
+/* Theme tokens (--primary-color, --background-color, etc.) are declared in
+   screen.css so light/dark mode can be switched in one place. */
 
 #controls {
   position: absolute;

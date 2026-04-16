@@ -1,3 +1,100 @@
+:root {
+  /* Surfaces */
+  --bg-body: #323232;
+  --bg-nav-top: #3c3c3c;
+  --bg-nav-bottom: #141414;
+  --bg-search: #646464;
+  --bg-songs-link: #e6e6e6;
+  --bg-bubble-top: #282828;
+  --bg-bubble-bottom: #1e1e1e;
+
+  /* Text */
+  --text-color: #c8c8c8;
+  --text-muted: #8c8c8c;
+  --text-strong: #ffffff;
+  --text-shadow: 0 -1px 0 #000;
+
+  /* Borders & separators */
+  --border-column: #000;
+  --border-button-top: #505050;
+  --border-button-bottom: #1e1e1e;
+  --border-nav-bottom: #000;
+  --border-bubble: #000;
+  --border-songs-link: #c8c8c8;
+
+  /* Accents */
+  --accent: #28b4dc;
+  --accent-active: #2090b0;
+  --accent-soft: rgba(40, 180, 220, 0.2);
+
+  /* Shadows / overlays */
+  --shadow-wrapper: 0 0 10px #000;
+  --row-stripe: rgba(0, 0, 0, 0.06);
+  --shadow-search-inset: inset 1px 1px 1px #000;
+  --shadow-bubble:
+    2px 2px 8px rgba(0, 0, 0, 0.5),
+    inset 0 2px 5px rgba(255, 255, 255, 0.1);
+  --overlay-button-hover: rgba(255, 255, 255, 0.1);
+  --overlay-button-active: rgba(255, 255, 255, 0.2);
+  --bubble-tail: #323232;
+
+  /* Shared with player.css */
+  --primary-color: #28b4dc;
+  --secondary-color: #14788c;
+  --highlight-color: #aaeeff;
+  --shadow-color: rgba(0, 0, 0, 0.6);
+  --light-shadow-color: rgba(255, 255, 255, 0.2);
+  --dark-shadow-color: #000;
+  --background-color: #323232;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-body: #f0f0f0;
+    --bg-nav-top: #ffffff;
+    --bg-nav-bottom: #dcdcdc;
+    --bg-search: #ffffff;
+    --bg-songs-link: #ffffff;
+    --bg-bubble-top: #fafafa;
+    --bg-bubble-bottom: #e4e4e4;
+
+    --text-color: #2a2a2a;
+    --text-muted: #5a5a5a;
+    --text-strong: #000000;
+    --text-shadow: none;
+
+    --border-column: #c4c4c4;
+    --border-button-top: #ffffff;
+    --border-button-bottom: #c4c4c4;
+    --border-nav-bottom: #b8b8b8;
+    --border-bubble: #b0b0b0;
+    --border-songs-link: #c8c8c8;
+
+    --accent: #1e8fb4;
+    --accent-active: #14788c;
+    --accent-soft: rgba(40, 180, 220, 0.22);
+
+    --shadow-wrapper: 0 0 10px rgba(0, 0, 0, 0.15);
+    --row-stripe: rgba(0, 0, 0, 0.04);
+    --shadow-search-inset: inset 1px 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-bubble:
+      2px 2px 8px rgba(0, 0, 0, 0.2),
+      inset 0 2px 5px rgba(255, 255, 255, 0.6);
+    --overlay-button-hover: rgba(0, 0, 0, 0.06);
+    --overlay-button-active: rgba(0, 0, 0, 0.12);
+    --bubble-tail: #f0f0f0;
+
+    /* Shared with player.css */
+    --primary-color: #1e8fb4;
+    --secondary-color: #14788c;
+    --highlight-color: #aaeeff;
+    --shadow-color: rgba(0, 0, 0, 0.25);
+    --light-shadow-color: rgba(255, 255, 255, 0.6);
+    --dark-shadow-color: rgba(0, 0, 0, 0.2);
+    --background-color: #e6e6e6;
+  }
+}
+
 * {
   border: none;
   margin: 0;
@@ -17,8 +114,8 @@ button {
 
 body {
   font: 500 13px/16px "Arial", sans-serif;
-  color: #c8c8c8;
-  text-shadow: 0 -1px 0px #000;
+  color: var(--text-color);
+  text-shadow: var(--text-shadow);
   height: 100%;
 }
 
@@ -30,8 +127,8 @@ h3 {
   overflow: hidden;
   height: 100%;
   margin: 0 auto;
-  background: #323232;
-  box-shadow: 0px 0px 10px #000;
+  background: var(--bg-body);
+  box-shadow: var(--shadow-wrapper);
   display: grid;
   grid-template-rows: auto 1fr;
   grid-template-columns: 160px fit-content(300px) fit-content(300px) minmax(300px, 1fr);
@@ -40,11 +137,11 @@ h3 {
 #nav {
   grid-column: 1 / -1;
   width: 100%;
-  background-image: linear-gradient(#3c3c3c, #141414);
-  border-bottom: 1px solid #000;
+  background-image: linear-gradient(var(--bg-nav-top), var(--bg-nav-bottom));
+  border-bottom: 1px solid var(--border-nav-bottom);
   line-height: 50px;
   vertical-align: top;
-  color: #8c8c8c;
+  color: var(--text-muted);
 }
 
 #nav>* {
@@ -55,24 +152,24 @@ h3 {
 #nav button {
   color: inherit;
   background: transparent;
-  text-shadow: 0px -1px 0 #000;
+  text-shadow: var(--text-shadow);
 }
 
 #nav button:hover {
-  color: #28b4dc;
+  color: var(--accent);
 }
 
 #nav button:active {
-  color: #2090b0;
+  color: var(--accent-active);
 }
 
 #logo {
-  color: #28b4dc;
+  color: var(--accent);
   font-weight: 100;
   font-size: 24px;
   font-family: "Arial", sans-serif;
   margin: 0 20px 0 20px;
-  text-shadow: 0 -1px 0px #000;
+  text-shadow: var(--text-shadow);
   cursor: pointer;
 }
 
@@ -148,8 +245,10 @@ h3 {
   width: 300px;
   height: 8px;
   border-radius: 4px;
-  background-image: linear-gradient(#28b4dc, #14788c);
-  box-shadow: 0px 1px rgba(255, 255, 255, 0.2), 0px -1px #000;
+  background-image: linear-gradient(var(--primary-color), var(--secondary-color));
+  box-shadow:
+    0px 1px var(--light-shadow-color),
+    0px -1px var(--dark-shadow-color);
 }
 
 .inputBar .handler {
@@ -282,7 +381,7 @@ h3 {
 #c2,
 #c3,
 #c4 {
-  border-left: 1px solid #000;
+  border-left: 1px solid var(--border-column);
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
@@ -295,36 +394,36 @@ h3 {
 }
 
 #c1>button {
-  color: #fff;
+  color: var(--text-strong);
   text-align: left;
   font-weight: 100;
   font-size: 16px;
   width: 100%;
   line-height: 40px;
   padding: 0 0 0 20px;
-  border-top: 1px solid #505050;
-  border-bottom: 1px solid #1e1e1e;
+  border-top: 1px solid var(--border-button-top);
+  border-bottom: 1px solid var(--border-button-bottom);
   cursor: pointer;
-  text-shadow: 0 -1px 0 #000;
+  text-shadow: var(--text-shadow);
   background-color: rgba(230, 230, 230, 0);
 }
 
 #c1>button:hover {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--overlay-button-hover);
 }
 
 #c1>button:active {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: var(--overlay-button-active);
 }
 
 input[type="search"] {
   -webkit-appearance: textfield;
   font: 500 16px/28px "Arial", sans-serif;
-  color: #fff;
+  color: var(--text-strong);
   width: 140px;
   border-radius: 15px;
-  box-shadow: inset 1px 1px 1px #000;
-  background-color: #646464;
+  box-shadow: var(--shadow-search-inset);
+  background-color: var(--bg-search);
   margin: 10px 0;
 }
 
@@ -374,7 +473,7 @@ input[type="search"] {
 }
 
 .row:nth-of-type(2n) {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--row-stripe);
 }
 
 .row a {
@@ -387,7 +486,7 @@ input[type="search"] {
 }
 
 .row button {
-  color: #fff;
+  color: var(--text-strong);
   background: transparent;
   display: none;
   width: 20px;
@@ -412,8 +511,8 @@ input[type="search"] {
 
 .row:hover,
 .row.highlight {
-  box-shadow: inset 0 0 20px 20px rgba(40, 180, 220, 0.2);
-  color: #fff;
+  box-shadow: inset 0 0 20px 20px var(--accent-soft);
+  color: var(--text-strong);
 }
 
 .row:hover button,
@@ -422,7 +521,7 @@ input[type="search"] {
 }
 
 .row.playing {
-  color: #28b4dc;
+  color: var(--accent);
 }
 
 /* Sits inside the existing 20px-wide button gutter so the song title
@@ -486,25 +585,25 @@ input[type="search"] {
 
 #songs a {
   display: block;
-  border: 1px solid #c8c8c8;
+  border: 1px solid var(--border-songs-link);
   padding: 4px 10px;
   margin-bottom: 5px;
-  background-color: #e6e6e6;
+  background-color: var(--bg-songs-link);
 }
 
 .bubble {
   z-index: 1;
   position: absolute;
-  background-image: linear-gradient(#282828, #1e1e1e);
+  background-image: linear-gradient(var(--bg-bubble-top), var(--bg-bubble-bottom));
   border-radius: 8px;
-  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.5), inset 0 2px 5px rgba(255, 255, 255, 0.1);
-  border: 1px solid #000;
+  box-shadow: var(--shadow-bubble);
+  border: 1px solid var(--border-bubble);
 }
 
 .bubble:before {
   z-index: -1;
   content: '';
-  border-color: transparent transparent #000 transparent;
+  border-color: transparent transparent var(--border-bubble) transparent;
   border-style: solid;
   border-width: 12px;
   position: absolute;
@@ -513,7 +612,7 @@ input[type="search"] {
 .bubble:after {
   z-index: -1;
   content: '';
-  border-color: transparent transparent #323232 transparent;
+  border-color: transparent transparent var(--bubble-tail) transparent;
   border-style: solid;
   border-width: 10px;
   position: absolute;
