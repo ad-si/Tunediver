@@ -97,6 +97,16 @@ function initPlayer () {
       playEl.addEventListener("click", () => playpause(), false)
     }
 
+    const previousEl = document.getElementById("previous")
+    if (previousEl) {
+      previousEl.addEventListener("click", () => playAdjacentSong(-1), false)
+    }
+
+    const nextEl = document.getElementById("next")
+    if (nextEl) {
+      nextEl.addEventListener("click", () => playAdjacentSong(1), false)
+    }
+
     const progressInputEl = document.getElementById("progressInput") as HTMLInputElement
 
     if (progressInputEl) {

@@ -143,6 +143,21 @@ function playSong(
   }
 }
 
+// Play the song adjacent to the currently playing one within the same
+// artist. `direction` is +1 for next, -1 for previous. No-op if nothing
+// is playing, or if there is no neighbour in the requested direction.
+function playAdjacentSong(direction: 1 | -1): void {
+  if (!currentlyPlaying) return
+  const { artistSlug, songSlug } = currentlyPlaying
+  ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
+    const idx = songs.findIndex((s) => s.slug === songSlug)
+    if (idx === -1) return
+    const target = songs[idx + direction]
+    if (!target) return
+    playSong(target, artistSlug, false)
+  })
+}
+
 // Pick a random artist and a random song from that artist, then pre-load
 // it in the player without starting playback. Retries with a different
 // artist if the picked one has no listable songs.
