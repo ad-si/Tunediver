@@ -3,6 +3,11 @@ audio.volume = 0.5
 
 let tempVolume: number = 0.5
 
+// True only while the user is actively dragging the progress bar (pointer
+// is down). Using focus for this was too aggressive: after a click the
+// input stays focused, which would freeze the progress indicator.
+let isSeekingProgress: boolean = false
+
 
 function initPlayer () {
   // Set up interval for continuous updates (as a fallback)
@@ -95,6 +100,16 @@ function initPlayer () {
     const progressInputEl = document.getElementById("progressInput") as HTMLInputElement
 
     if (progressInputEl) {
+      // Mark seeking only while the pointer is held down. Listen for
+      // pointerup / pointercancel on window so drags that end off the
+      // slider still clear the flag.
+      progressInputEl.addEventListener("pointerdown", () => {
+        isSeekingProgress = true
+      })
+      const endSeek = (): void => { isSeekingProgress = false }
+      window.addEventListener("pointerup", endSeek)
+      window.addEventListener("pointercancel", endSeek)
+
       // Handle when user is dragging the slider
       progressInputEl.addEventListener("input", () => {
         if (audio && audio.src && !isNaN(audio.duration)) {
@@ -247,7 +262,7 @@ function playerUpdater(): void {
       const progress = Math.min(100, Math.max(0, (audio.currentTime / audio.duration) * 100))
 
       // Don't update slider if user is currently dragging it
-      if (document.activeElement !== progressInputEl) {
+      if (!isSeekingProgress) {
         progressInputEl.value = progress.toString()
       }
       progressInputEl.style.setProperty("--progress", progress + "%")
