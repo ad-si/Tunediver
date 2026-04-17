@@ -71,6 +71,46 @@ function updatePlayingMarkers(): void {
   if (songRow) songRow.classList.add("playing")
 }
 
+// Simple fuzzy match: checks whether all characters of the query appear
+// in order within the target string (case-insensitive).
+function fuzzyMatch(query: string, target: string): boolean {
+  const q = query.toLowerCase()
+  const t = target.toLowerCase()
+  let qi = 0
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++
+  }
+  return qi === q.length
+}
+
+// Filter visible rows in c2 and c3 based on the current search query.
+// Each row is matched against its text content and relevant data attributes.
+function filterRows(query: string): void {
+  const q = query.trim()
+
+  const filter = (container: HTMLElement) => {
+    const rows = container.querySelectorAll(".row")
+    rows.forEach((row) => {
+      const el = row as HTMLElement
+      if (!q) {
+        el.style.display = ""
+        return
+      }
+      // Match against visible text, title attribute, and data attributes
+      const text = (el.textContent || "")
+        + " " + (el.getAttribute("title") || "")
+        + " " + (el.getAttribute("data-artist-slug") || "")
+        + " " + (el.getAttribute("data-song-slug") || "")
+      el.style.display = fuzzyMatch(q, text) ? "" : "none"
+    })
+  }
+
+  filter($("c2"))
+  if ($("c3").style.display !== "none") {
+    filter($("c3"))
+  }
+}
+
 // Utility functions
 function toggle(id: string): void {
   const element = $(id)
@@ -242,8 +282,10 @@ function navigateList(direction: 1 | -1): boolean {
   let sibling = (direction > 0
     ? highlighted.nextElementSibling
     : highlighted.previousElementSibling) as HTMLElement | null
-  // Skip non-row siblings just in case
-  while (sibling && !sibling.classList.contains("row")) {
+  // Skip non-row siblings and rows hidden by search filtering
+  while (sibling && (
+    !sibling.classList.contains("row") || sibling.style.display === "none"
+  )) {
     sibling = (direction > 0
       ? sibling.nextElementSibling
       : sibling.previousElementSibling) as HTMLElement | null
@@ -738,6 +780,12 @@ function viewController(): Record<string, Function> {
 
       $("search").addEventListener("keyup", (e: Event) => {
         e.stopPropagation()
+        filterRows((e.target as HTMLInputElement).value)
+      })
+
+      // Also handle clearing via the "x" button on type="search" inputs
+      $("search").addEventListener("search", (e: Event) => {
+        filterRows((e.target as HTMLInputElement).value)
       })
 
       $("logo").addEventListener("click", () => {
@@ -745,10 +793,12 @@ function viewController(): Record<string, Function> {
       })
 
       $("artists").addEventListener("click", () => {
+        ;($("search") as HTMLInputElement).value = ""
         printObj.artists()
       })
 
       $("songs").addEventListener("click", () => {
+        ;($("search") as HTMLInputElement).value = ""
         printObj.allSongs()
       })
 
