@@ -70,12 +70,12 @@ function initPlayer () {
   if (controlsEl) {
     shaven(
       [controlsEl,
-        ["button#previous"],
-        ["button#play", {"class": "paused"}],
-        ["button#next"],
+        ["button#previous", {"disabled": "disabled"}],
+        ["button#play", {"class": "paused", "disabled": "disabled"}],
+        ["button#next", {"disabled": "disabled"}],
         ["span#time", "0:00"],
         ["div",
-          ["p#playerInfo", "Artist - Song"],
+          ["p#playerInfo", ""],
           ["input#progressInput",
             {type: "range", min: "0", max: "100", value: "0", step: "0.1"}
           ]

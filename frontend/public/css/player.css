@@ -28,6 +28,13 @@
   position: relative;
   left: 2px;
 }
+#previous:disabled,
+#play:disabled,
+#next:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
 #previous,
 #next {
   height: 30px;

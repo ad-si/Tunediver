@@ -185,6 +185,12 @@ function playSong(
     // so pre-loaded tracks that aren't autoplaying stay unmarked.
     currentlyPlaying = { artistSlug: artistName, songSlug: song.slug }
 
+    // Enable transport buttons now that a song is loaded
+    for (const id of ["previous", "play", "next"]) {
+      const el = document.getElementById(id)
+      if (el) el.removeAttribute("disabled")
+    }
+
     // Update UI and optionally start playing
     if (autoplay) {
       playpause()
@@ -817,7 +823,8 @@ function viewController(): Record<string, Function> {
       })
 
       $("logo").addEventListener("click", () => {
-        window.location.href = baseURL + "/"
+        history.pushState({"url": ""}, "", baseURL + "/")
+        route("")
       })
 
       $("artists").addEventListener("click", () => {
@@ -892,7 +899,8 @@ function route(state: string | { url?: string }): void {
     if (dirs.length === 1 && dirs[0] !== "") view.artist(dirs[0])
       else if (dirs.length === 2) view.song(dirs)
       else if (url === "") {
-      // Empty URL, do nothing
+      printObj.artists()
+      printObj.startpage()
     }
     else if (url !== "") {
       alert("This website is not available")
@@ -907,7 +915,7 @@ function setShortcuts(): void {
     switch (e.keyCode) {
       case 32: //spacebar
         e.preventDefault()
-        playpause()
+        if (audio.src) playpause()
         break
         case 37: //left
         break
