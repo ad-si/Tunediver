@@ -234,6 +234,7 @@ struct SingleSong {
   lyrics: String,
   src: String,
   file_name: String,
+  file_path: String,
 }
 
 #[derive(Serialize)]
@@ -327,6 +328,12 @@ fn get_song(
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
+      let file_path = track
+        .path
+        .canonicalize()
+        .unwrap_or_else(|_| track.path.clone())
+        .to_string_lossy()
+        .into_owned();
       let lyrics = read_track_lyrics(&track.path).unwrap_or_default();
 
       Json(SingleSongResponse {
@@ -342,6 +349,7 @@ fn get_song(
             encode(&track.title)
           ),
           file_name,
+          file_path,
         },
       })
     }
@@ -354,6 +362,7 @@ fn get_song(
         lyrics: String::new(),
         src: String::new(),
         file_name: String::new(),
+        file_path: String::new(),
       },
     }),
   }

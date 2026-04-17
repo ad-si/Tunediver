@@ -566,6 +566,7 @@ const printObj = {
             ["button#playSong", "Play"],
             ["button#addSong", "Add"],
             ["button#shareSong", "Share"],
+            ["button#copyFilepath", "Copy Filepath"],
             ["img#songCover", {
               "src": coverUrl,
               "alt": "Image of " + (songData.track_artist || ""),
@@ -573,7 +574,6 @@ const printObj = {
             ["nav#songNav",
               ["h2#heading", songData.title],
               ["p#trackArtist", songData.track_artist || ""],
-              ["p#fileName", songData.file_name || ""],
             ],
             ["pre#lyrics", songData.lyrics || ""],
           ]
@@ -635,6 +635,23 @@ const printObj = {
             const songId = songDiv.getAttribute("data-song-id")
             if (songId && songRegistry[songId]) {
               playlist.push(songRegistry[songId].song)
+            }
+          }
+        }
+
+        if (target.id === "copyFilepath") {
+          const songDiv = document.getElementById("song")
+          if (songDiv) {
+            const songId = songDiv.getAttribute("data-song-id")
+            if (songId && songRegistry[songId]) {
+              const filePath = songRegistry[songId].song.file_path
+              if (filePath) {
+                navigator.clipboard.writeText(filePath)
+                target.textContent = "Copied!"
+                setTimeout(() => {
+                  target.textContent = "Copy Filepath"
+                }, 2000)
+              }
             }
           }
         }

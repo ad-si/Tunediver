@@ -8,6 +8,7 @@ type Song = {
   artist_slug?: string
   lyrics?: string
   file_name?: string
+  file_path?: string
 }
 
 type Artist = {
