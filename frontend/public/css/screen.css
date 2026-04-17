@@ -429,6 +429,7 @@ input[type="search"] {
   border-radius: 15px;
   box-shadow: var(--shadow-search-inset);
   background-color: var(--bg-search);
+  padding: 0 10px;
   margin: 10px 0;
 }
 
