@@ -911,6 +911,43 @@ function setShortcuts(): void {
     if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
       return
     }
+
+    // Handle up/down/enter when a tab button in c1 is focused
+    const tabButtons = Array.from(
+      $("c1").querySelectorAll("button")
+    ) as HTMLElement[]
+    const focusedTab = tabButtons.find((b) => b === active)
+    if (focusedTab) {
+      const idx = tabButtons.indexOf(focusedTab)
+      switch (e.keyCode) {
+        case 38: // up
+          e.preventDefault()
+          if (idx > 0) tabButtons[idx - 1].focus()
+          break
+        case 40: // down
+          e.preventDefault()
+          if (idx < tabButtons.length - 1) tabButtons[idx + 1].focus()
+          break
+        case 13: // enter
+          e.preventDefault()
+          focusedTab.click()
+          break
+        case 39: // right — move into the list
+          e.preventDefault()
+          focusedTab.blur()
+          {
+            const firstRow = $("c2").querySelector(".row") as HTMLElement | null
+            if (firstRow) {
+              const link = firstRow.querySelector("a") as HTMLElement | null
+              if (link) link.click()
+              firstRow.scrollIntoView({ block: "nearest" })
+            }
+          }
+          break
+      }
+      return
+    }
+
     switch (e.keyCode) {
       case 37: //left
         {
@@ -921,6 +958,10 @@ function setShortcuts(): void {
             if (artistHighlight) {
               artistHighlight.scrollIntoView({ block: "nearest" })
             }
+          } else {
+            // From c2 (or no highlight): focus the active tab button
+            const activeTab = $("c1").querySelector("button.active") as HTMLElement | null
+            if (activeTab) activeTab.focus()
           }
         }
         break
@@ -947,7 +988,11 @@ function setShortcuts(): void {
         break
         case 13: //enter
         {
-          const songHighlight = $("c3").querySelector(".row.highlight") as HTMLElement | null
+          // Check c3 first (artist tab's song list), then c2 (songs tab)
+          let songHighlight = $("c3").querySelector(".row.highlight") as HTMLElement | null
+          if (!songHighlight) {
+            songHighlight = $("c2").querySelector(".row.highlight") as HTMLElement | null
+          }
           if (songHighlight) {
             const songId = songHighlight.getAttribute("data-song-id")
             if (songId && songRegistry[songId]) {
