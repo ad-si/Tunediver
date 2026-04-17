@@ -8,8 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lofty::file::TaggedFileExt;
+use lofty::picture::MimeType;
 use lofty::read_from_path;
 use lofty::tag::Accessor;
+use rocket::http::ContentType;
+use rocket::response::status::NotFound;
 
 // Files whose tags are missing or unreadable surface under these labels
 // instead of borrowing identity from the on-disk filename or path.
@@ -356,6 +359,48 @@ fn get_song(
   }
 }
 
+// Serve the embedded cover art from an audio file's tags. Returns the raw
+// image bytes with the appropriate content type, or 404 if no picture is
+// embedded.
+#[get("/artists/<artist>/songs/<song>/cover")]
+fn get_song_cover(
+  artist: &str,
+  song: &str,
+  config: &State<AppConfig>,
+) -> Result<(ContentType, Vec<u8>), NotFound<String>> {
+  let decoded_artist = urlencoding::decode(artist)
+    .map(|s| s.into_owned())
+    .unwrap_or_else(|_| artist.to_string());
+
+  let track = config
+    .catalog
+    .find_track(&decoded_artist, song)
+    .ok_or_else(|| NotFound("Track not found".to_string()))?;
+
+  let tagged = read_from_path(&track.path)
+    .map_err(|_| NotFound("Cannot read tags".to_string()))?;
+
+  let tag = tagged
+    .primary_tag()
+    .or_else(|| tagged.first_tag())
+    .ok_or_else(|| NotFound("No tags".to_string()))?;
+
+  let picture = tag
+    .pictures()
+    .first()
+    .ok_or_else(|| NotFound("No cover art".to_string()))?;
+
+  let content_type = match picture.mime_type() {
+    Some(MimeType::Png) => ContentType::PNG,
+    Some(MimeType::Bmp) => ContentType::BMP,
+    Some(MimeType::Gif) => ContentType::GIF,
+    Some(MimeType::Tiff) => ContentType::new("image", "tiff"),
+    _ => ContentType::JPEG,
+  };
+
+  Ok((content_type, picture.data().to_vec()))
+}
+
 #[get("/artists/<artist>")]
 fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
   let decoded = urlencoding::decode(artist)
@@ -443,6 +488,7 @@ fn rocket() -> _ {
         get_artist_songs,
         get_artist_info,
         get_song,
+        get_song_cover,
         get_music_file
       ],
     )

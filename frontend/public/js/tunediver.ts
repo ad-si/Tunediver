@@ -421,7 +421,7 @@ const printObj = {
           ["div#artist",
             ["img", {
               src: baseURL + "/img/cover-placeholder.svg",
-              alt: "Image of" + artist.name}
+              alt: "Image of " + artist.name}
             ],
             ["nav#artistNav",
               ["h2#heading", artist.name],
@@ -558,15 +558,17 @@ const printObj = {
       }
 
       // Create song detail view with data-id attribute
+      const coverUrl = baseURL + "/api/artists/" + artistSlug
+        + "/songs/" + songData.slug + "/cover"
       const songDetailDiv = shaven(
         [$("c4"),
           ["div#song", {"data-song-id": detailSongId},
             ["button#playSong", "Play"],
             ["button#addSong", "Add"],
             ["button#shareSong", "Share"],
-            ["img", {
-              "src": baseURL + "/img/cover-placeholder.svg",
-              "alt": "Image of" + (songData.track_artist || ""),
+            ["img#songCover", {
+              "src": coverUrl,
+              "alt": "Image of " + (songData.track_artist || ""),
             }],
             ["nav#songNav",
               ["h2#heading", songData.title],
@@ -577,6 +579,15 @@ const printObj = {
           ]
         ]
       ).rootElement
+
+      // Fall back to placeholder if no embedded cover art
+      const coverImg = document.getElementById("songCover") as HTMLImageElement
+      if (coverImg) {
+        coverImg.onerror = () => {
+          coverImg.onerror = null
+          coverImg.src = baseURL + "/img/cover-placeholder.svg"
+        }
+      }
 
       // Use event delegation for detail view too
       const container = $("c4")
