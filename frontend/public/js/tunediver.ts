@@ -902,8 +902,29 @@ function setShortcuts(): void {
     }
     switch (e.keyCode) {
       case 37: //left
+        {
+          const songHighlight = $("c3").querySelector(".row.highlight")
+          if (songHighlight) {
+            songHighlight.classList.remove("highlight")
+            const artistHighlight = $("c2").querySelector(".row.highlight")
+            if (artistHighlight) {
+              artistHighlight.scrollIntoView({ block: "nearest" })
+            }
+          }
+        }
         break
         case 39: //right
+        {
+          const artistHighlight = $("c2").querySelector(".row.highlight")
+          if (artistHighlight) {
+            const firstSongRow = $("c3").querySelector(".row") as HTMLElement | null
+            if (firstSongRow) {
+              const link = firstSongRow.querySelector("a") as HTMLElement | null
+              if (link) link.click()
+              firstSongRow.scrollIntoView({ block: "nearest" })
+            }
+          }
+        }
         break
         case 38: //up
         e.preventDefault()
@@ -912,6 +933,18 @@ function setShortcuts(): void {
         case 40: //down
         e.preventDefault()
         if (!navigateList(1)) setVolume(-0.05, true)
+        break
+        case 13: //enter
+        {
+          const songHighlight = $("c3").querySelector(".row.highlight") as HTMLElement | null
+          if (songHighlight) {
+            const songId = songHighlight.getAttribute("data-song-id")
+            if (songId && songRegistry[songId]) {
+              const { song, artist } = songRegistry[songId]
+              playSong(song, artist, false)
+            }
+          }
+        }
         break
       }
   })
