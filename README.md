@@ -48,6 +48,66 @@ or edit `music_path` in `server/Rocket.toml`.
 The API will be available at http://localhost:7313 by default.
 
 
+### Auto-start at Login on macOS
+
+A `launchd` LaunchAgent can start the server automatically whenever you
+log in. The repo ships a portable wrapper script and a plist template.
+
+**1. Build the release binary**
+
+```sh
+cd server && cargo build --release
+```
+
+This produces `server/target/release/tunediver-api`, which the wrapper
+execs directly (no Rust toolchain needed at login).
+
+**2. Prepare the LaunchAgent plist**
+
+Copy the template, replace the three placeholders, and move it into
+place:
+
+```sh
+REPO=/absolute/path/to/Tunediver
+MUSIC=/absolute/path/to/your/music
+
+sed \
+  -e "s#REPLACE_REPO_PATH#$REPO#g" \
+  -e "s#REPLACE_MUSIC_DIR#$MUSIC#g" \
+  -e "s#REPLACE_HOME#$HOME#g" \
+  "$REPO/server/scripts/com.tunediver.server.plist.example" \
+  > ~/Library/LaunchAgents/com.tunediver.server.plist
+```
+
+**3. Load it**
+
+```sh
+launchctl bootstrap gui/$(id -u) \
+  ~/Library/LaunchAgents/com.tunediver.server.plist
+```
+
+On next login (and immediately, thanks to `RunAtLoad`) the server will
+start. The wrapper waits up to 5 minutes for `MUSIC_DIR` to be populated
+before launching, so a slow Dropbox/iCloud sync at login doesn't result
+in an empty catalog.
+
+**Operations**
+
+| Action    | Command |
+|-----------|---------|
+| Status    | `launchctl print gui/$(id -u)/com.tunediver.server` |
+| Restart   | `launchctl kickstart -k gui/$(id -u)/com.tunediver.server` |
+| Stop      | `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.tunediver.server.plist` |
+| Logs      | `tail -f ~/Library/Logs/tunediver.{out,err}.log` |
+
+After updating the server code, rebuild (`cargo build --release`) then
+`launchctl kickstart -k gui/$(id -u)/com.tunediver.server` to pick up
+the new binary.
+
+The plist uses `RunAtLoad` only — no `KeepAlive`. If the server
+crashes it stays down until the next login or manual kickstart.
+
+
 ## Project Structure
 
 - `frontend/` — TypeScript webapp (`public/js/`), plain CSS (`public/css/`), assets (`public/img/`)

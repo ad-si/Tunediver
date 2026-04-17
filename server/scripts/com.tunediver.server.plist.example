@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS LaunchAgent template for auto-starting TuneDiver at login.
+
+  Install:
+    1. Replace the REPLACE_* placeholders below.
+    2. Copy to ~/Library/LaunchAgents/com.tunediver.server.plist
+    3. Load:   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tunediver.server.plist
+    4. Verify: curl -sf http://127.0.0.1:7313/api/artists
+
+  See README.md ("Auto-start at Login on macOS") for full instructions.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tunediver.server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPLACE_REPO_PATH/server/scripts/launch-tunediver.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MUSIC_DIR</key>
+    <string>REPLACE_MUSIC_DIR</string>
+    <key>ROCKET_ADDRESS</key>
+    <string>127.0.0.1</string>
+    <key>ROCKET_PORT</key>
+    <string>7313</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>REPLACE_REPO_PATH/server</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>REPLACE_HOME/Library/Logs/tunediver.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>REPLACE_HOME/Library/Logs/tunediver.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
