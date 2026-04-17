@@ -712,8 +712,6 @@ function viewController(): Record<string, Function> {
               ["input#search", {type: "search", placeholder: "search"}],
               ["button#artists", "Artists"],
               ["button#songs", "Songs"],
-              ["button#info", "Infos"],
-              ["button#charts", "Charts"],
               ["button#playlists", "Playlists"]
             ],
             ["div#c2"],
@@ -744,10 +742,6 @@ function viewController(): Record<string, Function> {
 
       $("logo").addEventListener("click", () => {
         window.location.href = baseURL + "/"
-      })
-
-      $("charts").addEventListener("click", () => {
-        printObj.songs("")
       })
 
       $("artists").addEventListener("click", () => {

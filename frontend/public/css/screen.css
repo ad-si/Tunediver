@@ -437,11 +437,6 @@ input[type="search"] {
   margin-right: 5px;
 }
 
-#charts:before {
-  content: '\2605';
-  margin-right: 5px;
-}
-
 #songs:before {
   content: '\266B';
   margin-right: 5px;
@@ -449,12 +444,6 @@ input[type="search"] {
 
 #playlists:before {
   content: '\2665';
-  margin-right: 5px;
-}
-
-#info:before {
-  font-size: 22px;
-  content: '\2295';
   margin-right: 5px;
 }
 
