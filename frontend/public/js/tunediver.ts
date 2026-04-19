@@ -484,7 +484,6 @@ const printObj = {
 
       // Handle double-clicks on song divs
       container.addEventListener("dblclick", (e) => {
-        // Find the closest song div to the clicked element
         let target = e.target as HTMLElement
         const songDiv = target.closest(".row") as HTMLElement
 
@@ -492,11 +491,9 @@ const printObj = {
           e.preventDefault()
           e.stopPropagation()
 
-          // Get the song ID from the data attribute
           const songId = songDiv.getAttribute("data-song-id")
           if (songId && songRegistry[songId]) {
             const { song, artist } = songRegistry[songId]
-            console.log("Double-clicked song:", song.title)
             playSong(song, artist, false)
           }
           return false
@@ -597,24 +594,6 @@ const printObj = {
 
       // Use event delegation for detail view too
       const container = $("c4")
-
-      container.addEventListener("dblclick", (e) => {
-        let target = e.target as HTMLElement
-        const songDiv = target.closest("#song") as HTMLElement
-
-        if (songDiv) {
-          e.preventDefault()
-          e.stopPropagation()
-
-          const songId = songDiv.getAttribute("data-song-id")
-          if (songId && songRegistry[songId]) {
-            const { song, artist } = songRegistry[songId]
-            console.log("Song detail double-clicked:", song.title)
-            playSong(song, artist, false)
-          }
-          return false
-        }
-      })
 
       container.addEventListener("click", (e) => {
         let target = e.target as HTMLElement
