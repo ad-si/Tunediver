@@ -24,4 +24,4 @@ format:
 
 .PHONY: start
 start:
-	cd server && make start-with-path MUSIC_PATH=$(shell pwd)/example_music
+	cd server && ROCKET_PORT=7314 make start-with-path MUSIC_PATH=$(shell pwd)/example_music
