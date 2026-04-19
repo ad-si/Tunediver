@@ -3,6 +3,8 @@
 Tunediver is a local music server and music-player webapp to listen
 to your local music collection.
 
+![Screenshot of the Tunediver webapp](screenshots/2026-04-19t1140_webapp.png)
+
 
 ## API
 
