@@ -8,7 +8,7 @@
     "player"
   ],
   "author": "Adrian Sieber",
-  "license": "AGPL-3.0-only",
+  "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "https://github.com/ad-si/Tunediver"
