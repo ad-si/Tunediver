@@ -525,7 +525,7 @@ fn rocket() -> _ {
     .extract_inner("music_path")
     .unwrap_or_else(|_| String::from("music"));
 
-  println!("Starting TuneDiver with music path: {}", music_path);
+  println!("Starting Tunediver with music path: {}", music_path);
   let catalog = build_catalog(Path::new(&music_path));
   println!(
     "Indexed {} track(s) from tag metadata",

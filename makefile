@@ -25,3 +25,9 @@ format:
 .PHONY: start
 start:
 	cd server && ROCKET_PORT=7314 make start-with-path MUSIC_PATH=$(shell pwd)/example_music
+
+
+.PHONY: website-serve
+website-serve:
+	@echo "Serving website on http://localhost:8080"
+	cd website && python3 -m http.server 8080

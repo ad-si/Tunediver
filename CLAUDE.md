@@ -1,4 +1,4 @@
-# TuneDiver Development Guidelines
+# Tunediver Development Guidelines
 
 ## Build Commands
 

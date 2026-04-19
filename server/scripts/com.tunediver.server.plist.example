@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  macOS LaunchAgent template for auto-starting TuneDiver at login.
+  macOS LaunchAgent template for auto-starting Tunediver at login.
 
   Install:
     1. Replace the REPLACE_* placeholders below.

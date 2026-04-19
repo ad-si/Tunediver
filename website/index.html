@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tunediver — Your music. Your server. Your rules.</title>
+  <meta name="description" content="Tunediver is a self-hosted music server and web player for your local collection. Own your files, skip the subscriptions, play anything — MP3, FLAC, Opus, and more." />
+  <meta name="theme-color" content="#2080e5" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#0d6ad6" media="(prefers-color-scheme: light)" />
+
+  <link rel="icon" type="image/png" href="img/favicon.png" />
+  <link rel="apple-touch-icon" href="img/icon.png" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Tunediver — Your music. Your server. Your rules." />
+  <meta property="og:description" content="A self-hosted music server and web player for your local collection. Privacy-first, open source, free forever." />
+  <meta property="og:url" content="https://tunediver.com/" />
+  <meta property="og:image" content="https://tunediver.com/img/screenshot.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Tunediver — Your music. Your server. Your rules." />
+  <meta name="twitter:description" content="A self-hosted music server and web player for your local collection." />
+  <meta name="twitter:image" content="https://tunediver.com/img/screenshot.png" />
+
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<header class="site-nav">
+  <a class="brand" href="#top" aria-label="Tunediver home">
+    <img src="img/icon.png" alt="" width="32" height="32" />
+    <span>Tunediver</span>
+  </a>
+  <nav class="nav-links" aria-label="Primary">
+    <a href="#features">Features</a>
+    <a href="#why">Why Tunediver</a>
+    <a href="#start">Quick start</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <a class="btn btn-primary btn-sm" href="https://github.com/ad-si/tunediver" rel="noopener">
+    GitHub
+  </a>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-inner">
+      <div class="hero-text reveal">
+        <span class="eyebrow">Self-hosted music, done right</span>
+        <h1>Your music.<br/>Your server.<br/><span class="accent">Your rules.</span></h1>
+        <p class="lede">
+          Tunediver turns your local music collection into a fast, beautiful
+          web player — no cloud, no subscriptions, no tracking. Just your
+          files, the way you organized them.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/ad-si/tunediver" rel="noopener">
+            Get it on GitHub
+            <span aria-hidden="true">→</span>
+          </a>
+          <a class="btn btn-ghost" href="#features">See what it does</a>
+        </div>
+        <ul class="hero-meta">
+          <li>Free &amp; open source</li>
+          <li>AGPL-3.0 licensed</li>
+          <li>macOS first-class, runs anywhere</li>
+        </ul>
+      </div>
+      <figure class="hero-shot reveal">
+        <img src="img/screenshot.png" alt="Tunediver web player showing an artist list, songs, and now-playing panel with album art." width="1600" loading="eager" />
+      </figure>
+    </div>
+  </section>
+
+  <section id="features" class="section">
+    <header class="section-head reveal">
+      <h2>Built for people who love their music library</h2>
+      <p>Every feature is in service of one idea: you already have great music — playing it should feel great too.</p>
+    </header>
+
+    <ul class="features">
+      <li class="feature reveal">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z"/></svg>
+        </div>
+        <h3>Local-first &amp; private</h3>
+        <p>Your files never leave your machine. No account, no telemetry, no "personalized ads." Just audio over your own network.</p>
+      </li>
+
+      <li class="feature reveal">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <h3>Rich metadata</h3>
+        <p>Reads ID3, Vorbis, MP4, and more. Embedded lyrics and cover art are pulled straight from the file — no scraping, no guesswork.</p>
+      </li>
+
+      <li class="feature reveal">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        </div>
+        <h3>Fuzzy search, keyboard-first</h3>
+        <p>Find anything in two keystrokes. Arrow keys to browse, Enter to play. The whole library opens up without touching a mouse.</p>
+      </li>
+
+      <li class="feature reveal">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18Z"/></svg>
+        </div>
+        <h3>Dark &amp; light, automatic</h3>
+        <p>Respects your system preference out of the box. Tuned for long listening sessions either way.</p>
+      </li>
+
+      <li class="feature reveal">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        </div>
+        <h3>Every format you own</h3>
+        <p>MP3, M4A, FLAC, WAV, OGG, AAC, AIFF, ALAC, Opus, and more. HTTP range requests mean instant seeking on big lossless files.</p>
+      </li>
+
+      <li class="feature reveal">
+        <div class="feature-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v7"/><path d="M4.2 10.2A8 8 0 1 0 19.8 10.2"/><path d="m9 6 3-3 3 3"/></svg>
+        </div>
+        <h3>Free forever, open source</h3>
+        <p>Released under AGPL-3.0. Read the code, fork it, audit it, send a patch. No pricing page, no upsell.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section id="why" class="section section-alt">
+    <header class="section-head reveal">
+      <h2>Why Tunediver instead of a streaming service?</h2>
+      <p>Streaming is convenient — until it isn't. Albums disappear, subscriptions creep up, recommendations crowd out your actual taste.</p>
+    </header>
+
+    <div class="compare-wrap reveal">
+      <table class="compare">
+        <thead>
+          <tr>
+            <th scope="col"><span class="sr-only">Feature</span></th>
+            <th scope="col" class="is-us">Tunediver</th>
+            <th scope="col">Spotify</th>
+            <th scope="col">Apple Music</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">You own the files</th>
+            <td class="is-us yes">Yes</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <th scope="row">Works fully offline</th>
+            <td class="is-us yes">Always</td>
+            <td class="partial">Download only</td>
+            <td class="partial">Download only</td>
+          </tr>
+          <tr>
+            <th scope="row">No ads, no tracking</th>
+            <td class="is-us yes">Yes</td>
+            <td class="no">Paid tier</td>
+            <td class="no">Paid tier</td>
+          </tr>
+          <tr>
+            <th scope="row">No subscription</th>
+            <td class="is-us yes">Free forever</td>
+            <td class="no">$11.99/mo</td>
+            <td class="no">$10.99/mo</td>
+          </tr>
+          <tr>
+            <th scope="row">Open source</th>
+            <td class="is-us yes">AGPL-3.0</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <th scope="row">Plays any audio format</th>
+            <td class="is-us yes">FLAC, Opus, MP3, &hellip;</td>
+            <td class="partial">Ogg Vorbis / AAC</td>
+            <td class="partial">AAC / ALAC</td>
+          </tr>
+          <tr>
+            <th scope="row">Albums can't be taken away</th>
+            <td class="is-us yes">Yes</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="start" class="section">
+    <header class="section-head reveal">
+      <h2>Running in under a minute</h2>
+      <p>One clone, one <code>make</code>, one browser tab. The full guide lives in the README.</p>
+    </header>
+
+    <ol class="steps">
+      <li class="step reveal">
+        <div class="step-num">1</div>
+        <h3>Clone the repo</h3>
+        <div class="code-block">
+          <pre><code>git clone https://github.com/ad-si/tunediver.git
+cd tunediver</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy command">Copy</button>
+        </div>
+      </li>
+      <li class="step reveal">
+        <div class="step-num">2</div>
+        <h3>Point it at your music</h3>
+        <div class="code-block">
+          <pre><code>cd server
+make start-with-path MUSIC_PATH=/path/to/your/music</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy command">Copy</button>
+        </div>
+      </li>
+      <li class="step reveal">
+        <div class="step-num">3</div>
+        <h3>Open the player</h3>
+        <div class="code-block">
+          <pre><code>open http://localhost:7313</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy command">Copy</button>
+        </div>
+        <p class="step-hint">On macOS you can also set up a LaunchAgent so the server starts at login — see the README for the template.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section id="faq" class="section section-alt">
+    <header class="section-head reveal">
+      <h2>Frequently asked</h2>
+    </header>
+
+    <div class="faq reveal">
+      <details>
+        <summary>Which platforms does it run on?</summary>
+        <p>The server is a Rust binary and runs anywhere Rust builds — macOS, Linux, Windows. The web player works in any modern browser. A native Tauri desktop app is scaffolded and on the roadmap.</p>
+      </details>
+      <details>
+        <summary>Which audio formats are supported?</summary>
+        <p>MP3, M4A, FLAC, WAV, OGG, AAC, WMA, AIFF, ALAC, Opus, MP4, M4V, and WebM. Metadata (ID3v2, Vorbis comments, MP4 atoms) and embedded cover art / lyrics are read automatically.</p>
+      </details>
+      <details>
+        <summary>How much disk space do I need?</summary>
+        <p>Only what your own music collection takes up. Tunediver doesn't duplicate or re-encode anything — it streams the original files.</p>
+      </details>
+      <details>
+        <summary>Can I share it with my household?</summary>
+        <p>Yes. Anyone on the same local network can open the server's address in a browser. Expose it beyond your LAN with a reverse proxy (Caddy, nginx, Tailscale, etc.) if you want.</p>
+      </details>
+      <details>
+        <summary>Does it phone home?</summary>
+        <p>No. No analytics, no telemetry, no update pings. The server talks to your browser and your disk — that's it.</p>
+      </details>
+      <details>
+        <summary>How do I keep the server running?</summary>
+        <p>On macOS, a LaunchAgent template is included so Tunediver starts at login and stays up in the background. On Linux, use systemd or your init system of choice.</p>
+      </details>
+    </div>
+  </section>
+
+  <section id="community" class="section">
+    <div class="community reveal">
+      <h2>Open source, by design</h2>
+      <p>
+        Tunediver is released under the
+        <a href="https://www.gnu.org/licenses/agpl-3.0.html" rel="noopener">AGPL-3.0-or-later</a>.
+        Issues, pull requests, wild ideas — all welcome on GitHub.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/ad-si/tunediver" rel="noopener">Star on GitHub</a>
+        <a class="btn btn-ghost" href="https://github.com/ad-si/tunediver/issues" rel="noopener">File an issue</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="brand brand-small">
+      <img src="img/icon.png" alt="" width="24" height="24" />
+      <span>Tunediver</span>
+    </div>
+    <p class="footer-copy">
+      Built with care. Released under
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html" rel="noopener">AGPL-3.0-or-later</a>.
+      Source on <a href="https://github.com/ad-si/tunediver" rel="noopener">GitHub</a>.
+    </p>
+  </div>
+</footer>
+
+<script src="js/main.js" defer></script>
+</body>
+</html>
