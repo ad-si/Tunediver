@@ -577,6 +577,11 @@ const printObj = {
             ["nav#songNav",
               ["h2#heading", songData.title],
               ["p#trackArtist", songData.track_artist || ""],
+              ["p#dateAdded",
+                songData.date_added
+                  ? "Added " + songData.date_added
+                  : "",
+              ],
             ],
             ["pre#lyrics", songData.lyrics || ""],
           ]

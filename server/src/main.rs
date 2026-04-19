@@ -7,8 +7,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lofty::file::TaggedFileExt;
+use lofty::config::ParseOptions;
+use lofty::file::{AudioFile, FileType, TaggedFileExt};
 use lofty::picture::MimeType;
+use lofty::probe::Probe;
 use lofty::read_from_path;
 use lofty::tag::Accessor;
 use rocket::http::ContentType;
@@ -98,6 +100,46 @@ fn read_track_lyrics(path: &Path) -> Option<String> {
     .get_string(lofty::tag::ItemKey::UnsyncLyrics)
     .or_else(|| tag.get_string(lofty::tag::ItemKey::Lyrics))
     .map(|s| s.to_string())
+}
+
+// Read a custom TXXX user-defined text frame (e.g. "DATE_ADDED") from the
+// file's ID3v2 tag. The generic `Tag` view drops unmapped TXXX frames, so we
+// reparse via the concrete format and pull the frame off the `Id3v2Tag`.
+fn read_id3v2_user_text(path: &Path, description: &str) -> Option<String> {
+  let file_type = Probe::open(path)
+    .ok()?
+    .guess_file_type()
+    .ok()?
+    .file_type()?;
+
+  let mut file = fs::File::open(path).ok()?;
+  let options = ParseOptions::default();
+
+  let value = match file_type {
+    FileType::Mpeg => lofty::mpeg::MpegFile::read_from(&mut file, options)
+      .ok()?
+      .id3v2()
+      .and_then(|t| t.get_user_text(description))
+      .map(str::to_string),
+    FileType::Wav => lofty::iff::wav::WavFile::read_from(&mut file, options)
+      .ok()?
+      .id3v2()
+      .and_then(|t| t.get_user_text(description))
+      .map(str::to_string),
+    FileType::Aiff => lofty::iff::aiff::AiffFile::read_from(&mut file, options)
+      .ok()?
+      .id3v2()
+      .and_then(|t| t.get_user_text(description))
+      .map(str::to_string),
+    FileType::Flac => lofty::flac::FlacFile::read_from(&mut file, options)
+      .ok()?
+      .id3v2()
+      .and_then(|t| t.get_user_text(description))
+      .map(str::to_string),
+    _ => None,
+  };
+
+  value.filter(|s| !s.is_empty())
 }
 
 // Recursively collect every audio file under `dir`.
@@ -235,6 +277,7 @@ struct SingleSong {
   src: String,
   file_name: String,
   file_path: String,
+  date_added: String,
 }
 
 #[derive(Serialize)]
@@ -335,6 +378,8 @@ fn get_song(
         .to_string_lossy()
         .into_owned();
       let lyrics = read_track_lyrics(&track.path).unwrap_or_default();
+      let date_added =
+        read_id3v2_user_text(&track.path, "DATE_ADDED").unwrap_or_default();
 
       Json(SingleSongResponse {
         data: SingleSong {
@@ -350,6 +395,7 @@ fn get_song(
           ),
           file_name,
           file_path,
+          date_added,
         },
       })
     }
@@ -363,6 +409,7 @@ fn get_song(
         src: String::new(),
         file_name: String::new(),
         file_path: String::new(),
+        date_added: String::new(),
       },
     }),
   }

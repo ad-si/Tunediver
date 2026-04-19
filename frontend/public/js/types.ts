@@ -9,6 +9,7 @@ type Song = {
   lyrics?: string
   file_name?: string
   file_path?: string
+  date_added?: string
 }
 
 type Artist = {

@@ -584,6 +584,16 @@ input[type="search"] {
   line-height: 1.2;
 }
 
+#dateAdded {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 4px 0 0 0;
+}
+
+#dateAdded:empty {
+  display: none;
+}
+
 #songs a {
   display: block;
   border: 1px solid var(--border-songs-link);
