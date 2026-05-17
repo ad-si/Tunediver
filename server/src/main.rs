@@ -1,11 +1,13 @@
 #[macro_use]
 extern crate rocket;
 use rocket::fs::FileServer;
-use rocket::serde::{json::Json, Serialize};
+use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::State;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, FileType, TaggedFileExt};
@@ -13,8 +15,8 @@ use lofty::picture::MimeType;
 use lofty::probe::Probe;
 use lofty::read_from_path;
 use lofty::tag::Accessor;
-use rocket::http::ContentType;
-use rocket::response::status::NotFound;
+use rocket::http::{ContentType, Status};
+use rocket::response::status::{Created, NoContent, NotFound};
 
 // Files whose tags are missing or unreadable surface under these labels
 // instead of borrowing identity from the on-disk filename or path.
@@ -77,15 +79,19 @@ fn read_track_tags(path: &Path) -> (String, String) {
     None => (String::new(), String::new()),
   };
 
+  // Trim stray whitespace from tag values — some files in the wild ship
+  // with leading/trailing spaces in `TPE1`/`TIT2` frames, which would
+  // otherwise prevent (artist, title)-based lookups (e.g. playlist track
+  // refs) from matching the catalog entry.
   let artist = if artist.trim().is_empty() {
     UNKNOWN_ARTIST.to_string()
   } else {
-    artist
+    artist.trim().to_string()
   };
   let title = if title.trim().is_empty() {
     UNKNOWN_TITLE.to_string()
   } else {
-    title
+    title.trim().to_string()
   };
   (artist, title)
 }
@@ -220,6 +226,112 @@ impl Catalog {
       .tracks
       .iter()
       .find(|t| t.artist == artist && t.title == decoded)
+  }
+}
+
+// A playlist is identified by a generated id and contains an ordered list
+// of track references. Track refs use `(artist, title)` (matching the URL
+// scheme) so they remain stable across catalog rescans, at the cost of
+// breaking if the user retags a file — surfaced to the UI as `available:
+// false` rather than silently dropped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct TrackRef {
+  artist: String,
+  title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct Playlist {
+  id: String,
+  name: String,
+  tracks: Vec<TrackRef>,
+  created_at: u64,
+  updated_at: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct PlaylistFile {
+  version: u32,
+  playlists: Vec<Playlist>,
+}
+
+#[derive(Debug)]
+struct PlaylistStore {
+  path: PathBuf,
+  playlists: RwLock<Vec<Playlist>>,
+}
+
+fn now_secs() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_secs())
+    .unwrap_or(0)
+}
+
+// Generate an opaque id from the current time in nanoseconds. Collisions
+// require sub-nanosecond playlist creation on the same machine, which we
+// don't worry about for a single-user local app.
+fn generate_playlist_id() -> String {
+  let nanos = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_nanos())
+    .unwrap_or(0);
+  format!("pl_{:x}", nanos)
+}
+
+impl PlaylistStore {
+  fn load(path: PathBuf) -> Self {
+    let playlists = match fs::read_to_string(&path) {
+      Ok(s) => match serde_json::from_str::<PlaylistFile>(&s) {
+        Ok(file) => file.playlists,
+        Err(e) => {
+          eprintln!(
+            "Warning: could not parse {}: {}. Starting with empty list.",
+            path.display(),
+            e
+          );
+          Vec::new()
+        }
+      },
+      Err(_) => Vec::new(),
+    };
+    PlaylistStore {
+      path,
+      playlists: RwLock::new(playlists),
+    }
+  }
+
+  // Atomic-ish save: write to a temp file alongside the target and rename.
+  // Fails silently with a log line — playlist persistence is best-effort and
+  // the in-memory state remains authoritative for the current process.
+  fn save(&self, playlists: &[Playlist]) {
+    let file = PlaylistFile {
+      version: 1,
+      playlists: playlists.to_vec(),
+    };
+    let json = match serde_json::to_string_pretty(&file) {
+      Ok(s) => s,
+      Err(e) => {
+        eprintln!("Failed to serialize playlists: {}", e);
+        return;
+      }
+    };
+    let tmp = self.path.with_extension("json.tmp");
+    if let Err(e) = fs::write(&tmp, json) {
+      eprintln!("Failed to write {}: {}", tmp.display(), e);
+      return;
+    }
+    if let Err(e) = fs::rename(&tmp, &self.path) {
+      eprintln!(
+        "Failed to rename {} -> {}: {}",
+        tmp.display(),
+        self.path.display(),
+        e
+      );
+    }
   }
 }
 
@@ -471,6 +583,299 @@ fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
   })
 }
 
+// Playlist API ---------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct PlaylistSummary {
+  id: String,
+  name: String,
+  track_count: usize,
+  created_at: u64,
+  updated_at: u64,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct PlaylistListResponse {
+  data: Vec<PlaylistSummary>,
+}
+
+// A hydrated track in a playlist. Fields mirror `Song` so the frontend can
+// pass entries straight to `playSong`. `available` is false when the
+// catalog no longer contains the referenced `(artist, title)` pair (e.g.
+// the file was retagged or removed) — `src`/`slug` are empty in that case.
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct PlaylistTrack {
+  artist: String,
+  title: String,
+  available: bool,
+  slug: String,
+  src: String,
+  artist_slug: String,
+  track_artist: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct PlaylistDetail {
+  id: String,
+  name: String,
+  created_at: u64,
+  updated_at: u64,
+  tracks: Vec<PlaylistTrack>,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct PlaylistDetailResponse {
+  data: PlaylistDetail,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct CreatePlaylistInput {
+  name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct RenamePlaylistInput {
+  name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct TrackRefInput {
+  artist: String,
+  title: String,
+}
+
+fn summarize(playlist: &Playlist) -> PlaylistSummary {
+  PlaylistSummary {
+    id: playlist.id.clone(),
+    name: playlist.name.clone(),
+    track_count: playlist.tracks.len(),
+    created_at: playlist.created_at,
+    updated_at: playlist.updated_at,
+  }
+}
+
+fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
+  let tracks = playlist
+    .tracks
+    .iter()
+    .map(|tr| {
+      match catalog
+        .tracks
+        .iter()
+        .find(|t| t.artist == tr.artist && t.title == tr.title)
+      {
+        Some(t) => PlaylistTrack {
+          artist: tr.artist.clone(),
+          title: tr.title.clone(),
+          available: true,
+          slug: encode(&t.title),
+          src: format!("/api/{}/{}", encode(&t.artist), encode(&t.title)),
+          artist_slug: encode(&t.artist),
+          track_artist: t.artist.clone(),
+        },
+        None => PlaylistTrack {
+          artist: tr.artist.clone(),
+          title: tr.title.clone(),
+          available: false,
+          slug: String::new(),
+          src: String::new(),
+          artist_slug: encode(&tr.artist),
+          track_artist: tr.artist.clone(),
+        },
+      }
+    })
+    .collect();
+
+  PlaylistDetail {
+    id: playlist.id.clone(),
+    name: playlist.name.clone(),
+    created_at: playlist.created_at,
+    updated_at: playlist.updated_at,
+    tracks,
+  }
+}
+
+#[get("/playlists")]
+fn list_playlists(store: &State<PlaylistStore>) -> Json<PlaylistListResponse> {
+  let playlists = store.playlists.read().expect("playlists lock poisoned");
+  Json(PlaylistListResponse {
+    data: playlists.iter().map(summarize).collect(),
+  })
+}
+
+#[post("/playlists", data = "<input>")]
+fn create_playlist(
+  input: Json<CreatePlaylistInput>,
+  store: &State<PlaylistStore>,
+) -> Result<Created<Json<PlaylistDetailResponse>>, Status> {
+  let name = input.name.trim();
+  if name.is_empty() {
+    return Err(Status::BadRequest);
+  }
+  let now = now_secs();
+  let playlist = Playlist {
+    id: generate_playlist_id(),
+    name: name.to_string(),
+    tracks: Vec::new(),
+    created_at: now,
+    updated_at: now,
+  };
+  let location = format!("/api/playlists/{}", playlist.id);
+  let detail = PlaylistDetail {
+    id: playlist.id.clone(),
+    name: playlist.name.clone(),
+    created_at: playlist.created_at,
+    updated_at: playlist.updated_at,
+    tracks: Vec::new(),
+  };
+
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  playlists.push(playlist);
+  store.save(&playlists);
+  drop(playlists);
+
+  Ok(Created::new(location).body(Json(PlaylistDetailResponse { data: detail })))
+}
+
+#[get("/playlists/<id>")]
+fn get_playlist(
+  id: &str,
+  store: &State<PlaylistStore>,
+  config: &State<AppConfig>,
+) -> Result<Json<PlaylistDetailResponse>, Status> {
+  let playlists = store.playlists.read().expect("playlists lock poisoned");
+  let playlist = playlists
+    .iter()
+    .find(|p| p.id == id)
+    .ok_or(Status::NotFound)?;
+  Ok(Json(PlaylistDetailResponse {
+    data: hydrate(playlist, &config.catalog),
+  }))
+}
+
+#[patch("/playlists/<id>", data = "<input>")]
+fn rename_playlist(
+  id: &str,
+  input: Json<RenamePlaylistInput>,
+  store: &State<PlaylistStore>,
+  config: &State<AppConfig>,
+) -> Result<Json<PlaylistDetailResponse>, Status> {
+  let name = input.name.trim();
+  if name.is_empty() {
+    return Err(Status::BadRequest);
+  }
+
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  let playlist = playlists
+    .iter_mut()
+    .find(|p| p.id == id)
+    .ok_or(Status::NotFound)?;
+  playlist.name = name.to_string();
+  playlist.updated_at = now_secs();
+  let detail = hydrate(playlist, &config.catalog);
+  store.save(&playlists);
+  Ok(Json(PlaylistDetailResponse { data: detail }))
+}
+
+#[delete("/playlists/<id>")]
+fn delete_playlist(
+  id: &str,
+  store: &State<PlaylistStore>,
+) -> Result<NoContent, Status> {
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  let before = playlists.len();
+  playlists.retain(|p| p.id != id);
+  if playlists.len() == before {
+    return Err(Status::NotFound);
+  }
+  store.save(&playlists);
+  Ok(NoContent)
+}
+
+#[post("/playlists/<id>/tracks", data = "<input>")]
+fn add_playlist_track(
+  id: &str,
+  input: Json<TrackRefInput>,
+  store: &State<PlaylistStore>,
+  config: &State<AppConfig>,
+) -> Result<Json<PlaylistDetailResponse>, Status> {
+  let artist = input.artist.trim();
+  let title = input.title.trim();
+  if artist.is_empty() || title.is_empty() {
+    return Err(Status::BadRequest);
+  }
+
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  let playlist = playlists
+    .iter_mut()
+    .find(|p| p.id == id)
+    .ok_or(Status::NotFound)?;
+  playlist.tracks.push(TrackRef {
+    artist: artist.to_string(),
+    title: title.to_string(),
+  });
+  playlist.updated_at = now_secs();
+  let detail = hydrate(playlist, &config.catalog);
+  store.save(&playlists);
+  Ok(Json(PlaylistDetailResponse { data: detail }))
+}
+
+#[delete("/playlists/<id>/tracks/<index>")]
+fn remove_playlist_track(
+  id: &str,
+  index: usize,
+  store: &State<PlaylistStore>,
+  config: &State<AppConfig>,
+) -> Result<Json<PlaylistDetailResponse>, Status> {
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  let playlist = playlists
+    .iter_mut()
+    .find(|p| p.id == id)
+    .ok_or(Status::NotFound)?;
+  if index >= playlist.tracks.len() {
+    return Err(Status::NotFound);
+  }
+  playlist.tracks.remove(index);
+  playlist.updated_at = now_secs();
+  let detail = hydrate(playlist, &config.catalog);
+  store.save(&playlists);
+  Ok(Json(PlaylistDetailResponse { data: detail }))
+}
+
+#[put("/playlists/<id>/tracks", data = "<input>")]
+fn reorder_playlist_tracks(
+  id: &str,
+  input: Json<Vec<TrackRefInput>>,
+  store: &State<PlaylistStore>,
+  config: &State<AppConfig>,
+) -> Result<Json<PlaylistDetailResponse>, Status> {
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  let playlist = playlists
+    .iter_mut()
+    .find(|p| p.id == id)
+    .ok_or(Status::NotFound)?;
+  playlist.tracks = input
+    .into_inner()
+    .into_iter()
+    .map(|t| TrackRef {
+      artist: t.artist,
+      title: t.title,
+    })
+    .collect();
+  playlist.updated_at = now_secs();
+  let detail = hydrate(playlist, &config.catalog);
+  store.save(&playlists);
+  Ok(Json(PlaylistDetailResponse { data: detail }))
+}
+
 #[catch(404)]
 fn not_found() -> Json<ErrorResponse> {
   Json(ErrorResponse {
@@ -517,6 +922,17 @@ impl<'r> rocket::response::Responder<'r, 'static> for FileWithRanges {
   }
 }
 
+// Default playlist file location: alongside (i.e. in the parent of) the
+// music directory, so it doesn't get scanned and isn't tangled up with the
+// audio files themselves. Falls back to "./playlists.json" if the music
+// path has no parent (e.g. a bare filename).
+fn default_playlists_path(music_path: &Path) -> PathBuf {
+  match music_path.parent() {
+    Some(p) if !p.as_os_str().is_empty() => p.join("playlists.json"),
+    _ => PathBuf::from("playlists.json"),
+  }
+}
+
 #[launch]
 fn rocket() -> _ {
   // Read configuration from Rocket.toml
@@ -532,6 +948,13 @@ fn rocket() -> _ {
     catalog.tracks.len()
   );
 
+  let playlists_path: PathBuf = figment
+    .extract_inner::<String>("playlists_path")
+    .map(PathBuf::from)
+    .unwrap_or_else(|_| default_playlists_path(Path::new(&music_path)));
+  println!("Loading playlists from: {}", playlists_path.display());
+  let playlist_store = PlaylistStore::load(playlists_path);
+
   let config = AppConfig { catalog };
 
   rocket::build()
@@ -545,11 +968,20 @@ fn rocket() -> _ {
         get_artist_info,
         get_song,
         get_song_cover,
-        get_music_file
+        get_music_file,
+        list_playlists,
+        create_playlist,
+        get_playlist,
+        rename_playlist,
+        delete_playlist,
+        add_playlist_track,
+        remove_playlist_track,
+        reorder_playlist_tracks,
       ],
     )
     // Catch-all must be mounted last so it doesn't override other routes
     .mount("/", routes![catch_all])
     .register("/", catchers![not_found])
     .manage(config)
+    .manage(playlist_store)
 }

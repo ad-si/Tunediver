@@ -29,3 +29,37 @@ type SongRegistryEntry = {
   song: Song,
   artist: string
 }
+
+// A reference to a track inside a playlist, by (artist, title). The pair is
+// stable across catalog rescans; tracks whose pair no longer matches a
+// catalog entry come back with `available: false` and empty `src`/`slug`.
+type TrackRef = {
+  artist: string
+  title: string
+}
+
+type PlaylistSummary = {
+  id: string
+  name: string
+  track_count: number
+  created_at: number
+  updated_at: number
+}
+
+type PlaylistTrack = {
+  artist: string
+  title: string
+  available: boolean
+  slug: string
+  src: string
+  artist_slug: string
+  track_artist: string
+}
+
+type Playlist = {
+  id: string
+  name: string
+  created_at: number
+  updated_at: number
+  tracks: PlaylistTrack[]
+}

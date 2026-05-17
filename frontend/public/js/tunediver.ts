@@ -25,14 +25,28 @@ const settings: Record<string, any> = {}
 const playlist: Song[] = []
 
 // Tracks which song is currently loaded in the player so that matching rows
-// in the artist (c2) and song (c3) columns can be marked as playing.
-let currentlyPlaying: { artistSlug: string, songSlug: string } | null = null
+// in the artist (c2) and song (c3) columns can be marked as playing. When
+// playback was started from a playlist, `playlistId` + `playlistIndex` are
+// set so prev/next can step through that playlist rather than guessing
+// from `currentTab`.
+let currentlyPlaying: {
+  artistSlug: string
+  songSlug: string
+  playlistId?: string
+  playlistIndex?: number
+} | null = null
 
 // Which top-level tab is currently active. Drives neighbour navigation
-// (prev/next buttons and auto-advance when a song ends):
-//   "artists" → neighbour is the prev/next song by the same artist
-//   "songs"   → neighbour is the prev/next entry in the flat songs list
-let currentTab: "artists" | "songs" = "artists"
+// (prev/next buttons and auto-advance when a song ends) when no playlist
+// context is set on `currentlyPlaying`:
+//   "artists"   → neighbour is the prev/next song by the same artist
+//   "songs"     → neighbour is the prev/next entry in the flat songs list
+//   "playlists" → neighbour comes from the active playlist (via context)
+let currentTab: "artists" | "songs" | "playlists" = "artists"
+
+// The playlist currently rendered in c3 (when the Playlists tab is active),
+// so the play/remove handlers in the playlist's song rows can reference it.
+let currentPlaylistId: string | null = null
 
 // Mark the given c1 tab button as active and clear the active state
 // from the others. Pass null to clear all. Drives the colored highlight
@@ -215,7 +229,35 @@ function playSong(
 // if nothing is playing, or if there is no neighbour in that direction.
 function playAdjacentSong(direction: 1 | -1): void {
   if (!currentlyPlaying) return
-  const { artistSlug, songSlug } = currentlyPlaying
+  const { artistSlug, songSlug, playlistId, playlistIndex } = currentlyPlaying
+
+  // Playlist context overrides currentTab: even if the user has navigated
+  // away from the Playlists tab while a song plays, prev/next still walks
+  // the playlist that started playback.
+  if (playlistId !== undefined && playlistIndex !== undefined) {
+    ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
+      const targetIdx = playlistIndex + direction
+      const target = playlist.tracks[targetIdx]
+      if (!target || !target.available) return
+      playPlaylistTrack(playlist.id, targetIdx, target)
+
+      // If we're still viewing this playlist in c3, sync the highlight and
+      // detail view so the UI reflects what's playing.
+      if (currentPlaylistId === playlist.id) {
+        const row = $("c3").querySelector(
+          `.row[data-playlist-index="${targetIdx}"]`
+        ) as HTMLElement | null
+        if (row) {
+          highlight(row)
+          row.scrollIntoView({ block: "nearest" })
+        }
+      }
+      printObj.song(target.slug, target.artist_slug)
+      const url = `playlists/${playlist.id}/${targetIdx}`
+      history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    })
+    return
+  }
 
   if (currentTab === "songs") {
     ajax<Song[]>("/songs", (songs) => {
@@ -279,6 +321,207 @@ function tryRandomArtist(remaining: Artist[]): void {
   })
 }
 
+// Wrap playSong with playlist-context tracking so prev/next can walk the
+// playlist. We patch `currentlyPlaying` after `playSong` sets it because
+// playSong itself has no notion of playlists.
+function playPlaylistTrack(
+  playlistId: string,
+  index: number,
+  track: PlaylistTrack,
+): void {
+  if (!track.available) return
+  playSong(track as unknown as Song, track.artist_slug, false)
+  if (currentlyPlaying) {
+    currentlyPlaying.playlistId = playlistId
+    currentlyPlaying.playlistIndex = index
+  }
+}
+
+// Prompt for a name, POST, then refresh the list and open the new playlist.
+function createPlaylistFlow(): void {
+  const name = prompt("Playlist name")
+  if (name === null) return
+  const trimmed = name.trim()
+  if (!trimmed) return
+  ajaxMutate<Playlist>(
+    "POST",
+    "/playlists",
+    { name: trimmed },
+    (created) => {
+      printObj.playlists()
+      if (created) printObj.playlist(created.id)
+    }
+  )
+}
+
+function renamePlaylistFlow(id: string, current: string): void {
+  const name = prompt("Rename playlist", current)
+  if (name === null) return
+  const trimmed = name.trim()
+  if (!trimmed || trimmed === current) return
+  ajaxMutate<Playlist>(
+    "PATCH",
+    `/playlists/${id}`,
+    { name: trimmed },
+    () => {
+      printObj.playlist(id)
+      // If the list is visible in c2, refresh its labels.
+      if (currentTab === "playlists") {
+        const c2Playlists = $("c2").querySelectorAll(`.row[data-playlist-id]`)
+        c2Playlists.forEach((r) => {
+          const el = r as HTMLElement
+          if (el.getAttribute("data-playlist-id") === id) {
+            const a = el.querySelector("a")
+            if (a) a.textContent = trimmed
+            el.setAttribute("title", trimmed)
+          }
+        })
+      }
+    }
+  )
+}
+
+function deletePlaylistFlow(id: string, name: string): void {
+  if (!confirm(`Delete playlist "${name}"?`)) return
+  ajaxMutate<void>(
+    "DELETE",
+    `/playlists/${id}`,
+    null,
+    () => {
+      if (currentlyPlaying && currentlyPlaying.playlistId === id) {
+        currentlyPlaying.playlistId = undefined
+        currentlyPlaying.playlistIndex = undefined
+      }
+      currentPlaylistId = null
+      printObj.playlists()
+      history.pushState(
+        { "url": "playlists" }, "Playlists", baseURL + "/playlists"
+      )
+    }
+  )
+}
+
+// Open a bubble popover anchored to `anchor` (typically the song detail's
+// Add button) listing every playlist and a "+ New playlist…" entry.
+// Clicking an entry adds the song; clicking the entry for a new playlist
+// creates one and then adds the song to it.
+function showAddToPlaylistBubble(song: Song, anchor: HTMLElement): void {
+  const bubble = $("addToPlaylistBubble")
+
+  // Close any other open bubbles since we stopped propagation on the click
+  // that opened this one (so the wrapper-level click handler didn't fire).
+  const bubbles = document.getElementsByClassName("bubble")
+  for (let i = 0; i < bubbles.length; i++) {
+    const el = bubbles[i] as HTMLElement
+    if (el.id !== "addToPlaylistBubble") el.style.display = "none"
+  }
+
+  bubble.innerHTML = ""
+
+  // Use fixed positioning so the bubble lands predictably right under the
+  // anchor regardless of the wrapper's offset-parent quirks.
+  const rect = anchor.getBoundingClientRect()
+  bubble.style.position = "fixed"
+  bubble.style.left = rect.left + "px"
+  bubble.style.top = (rect.bottom + 8) + "px"
+  bubble.style.width = "200px"
+  bubble.style.maxHeight = "240px"
+  bubble.style.overflowY = "auto"
+  bubble.style.padding = "6px 0"
+
+  ajax<PlaylistSummary[]>("/playlists", (playlists) => {
+    const newRow = shaven(
+      ["div#.row.newPlaylist", ["a", "+ New playlist…"]]
+    ).rootElement
+    newRow.addEventListener("click", (e: Event) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const name = prompt("Playlist name")
+      if (name === null) return
+      const trimmed = name.trim()
+      if (!trimmed) return
+      ajaxMutate<Playlist>(
+        "POST",
+        "/playlists",
+        { name: trimmed },
+        (created) => {
+          if (created) addSongToPlaylist(created.id, song, anchor)
+        }
+      )
+    })
+    bubble.appendChild(newRow)
+
+    playlists
+      .slice()
+      .sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+      )
+      .forEach((pl) => {
+        const row = shaven(
+          ["div#.row", { "data-playlist-id": pl.id },
+            ["a", pl.name]
+          ]
+        ).rootElement
+        row.addEventListener("click", (e: Event) => {
+          e.preventDefault()
+          e.stopPropagation()
+          addSongToPlaylist(pl.id, song, anchor)
+        })
+        bubble.appendChild(row)
+      })
+
+    bubble.style.display = "block"
+  })
+}
+
+function addSongToPlaylist(
+  playlistId: string,
+  song: Song,
+  anchor: HTMLElement,
+): void {
+  const artist = song.track_artist || ""
+  const title = song.title || ""
+  if (!artist || !title) return
+
+  ajaxMutate<Playlist>(
+    "POST",
+    `/playlists/${playlistId}/tracks`,
+    { artist, title },
+    () => {
+      $("addToPlaylistBubble").style.display = "none"
+      const original = anchor.textContent || "Add"
+      anchor.textContent = "Added!"
+      window.setTimeout(() => {
+        anchor.textContent = original
+      }, 1500)
+    }
+  )
+}
+
+function removePlaylistTrack(playlistId: string, index: number): void {
+  ajaxMutate<Playlist>(
+    "DELETE",
+    `/playlists/${playlistId}/tracks/${index}`,
+    null,
+    () => {
+      // The played track's index might shift; re-render and update markers.
+      if (
+        currentlyPlaying &&
+        currentlyPlaying.playlistId === playlistId &&
+        currentlyPlaying.playlistIndex !== undefined
+      ) {
+        if (currentlyPlaying.playlistIndex === index) {
+          currentlyPlaying.playlistId = undefined
+          currentlyPlaying.playlistIndex = undefined
+        } else if (currentlyPlaying.playlistIndex > index) {
+          currentlyPlaying.playlistIndex -= 1
+        }
+      }
+      printObj.playlist(playlistId)
+    }
+  )
+}
+
 function highlight(element: HTMLElement): void {
   const containerEl = element.parentElement
   if (!containerEl) return
@@ -322,11 +565,37 @@ function ajax<T>(
   url: string,
   func: (data: T) => void
 ): void {
+  // GET responses are expected to carry a `data` body, but ajaxRequest's
+  // signature allows undefined (for 204 No Content). Narrow here.
+  ajaxRequest<T>("GET", url, null, (data) => {
+    if (data !== undefined) func(data)
+  })
+}
+
+// Non-GET equivalent of `ajax`. Body is JSON-serialised. Success callback
+// receives the response `data` (may be undefined for 204 responses, in
+// which case `func` is still invoked with `undefined` so callers can react
+// to the success without needing a body).
+function ajaxMutate<T>(
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
+  url: string,
+  body: unknown,
+  func: (data: T | undefined) => void,
+  onError?: (status: number) => void
+): void {
+  ajaxRequest<T>(method, url, body, func, onError)
+}
+
+function ajaxRequest<T>(
+  method: string,
+  url: string,
+  body: unknown,
+  func: (data: T | undefined) => void,
+  onError?: (status: number) => void
+): void {
   const base = "/api"
   const x = new XMLHttpRequest()
-  let str = ""
-  let res: ApiResponse<T>
-  let path: string
+  const path = base + url
 
   // Show loading spinner only if the request takes noticeable time,
   // to avoid a flash on fast responses
@@ -335,37 +604,46 @@ function ajax<T>(
     spinnerEl.style.display = "inline-block"
   }, 200)
 
-  path = base + url + (str ? "?" + str : "")
-
-  x.open("get", path, true)
-  x.send(null)
-  x.onreadystatechange = function(): void {
-    if (x.readyState === 4) {
-      window.clearTimeout(spinnerTimeout)
-      spinnerEl.style.display = "none"
-
-      if (x.status === 200) {
-        res = JSON.parse(x.responseText)
-
-        if (!res.error) {
-          if (res.data) {
-            func(res.data as T)
-          }
-          else {
-            throw new Error(`No data available for ${path}`)
-          }
-        }
-        else {
-          alert(`This Error occurred: ${res.error}`)
-        }
-      }
-      else {
-        throw new Error(
-          `Http error ${x.status} occurred during an ajax request to ${path}`
-        )
-      }
-    }
+  x.open(method, path, true)
+  if (body !== null && body !== undefined) {
+    x.setRequestHeader("Content-Type", "application/json")
   }
+
+  x.onreadystatechange = function(): void {
+    if (x.readyState !== 4) return
+    window.clearTimeout(spinnerTimeout)
+    spinnerEl.style.display = "none"
+
+    // 2xx — success. 204 (No Content) has no body, so skip parsing.
+    if (x.status >= 200 && x.status < 300) {
+      if (x.status === 204 || !x.responseText) {
+        func(undefined)
+        return
+      }
+      let res: ApiResponse<T>
+      try {
+        res = JSON.parse(x.responseText)
+      } catch (_e) {
+        throw new Error(`Could not parse JSON response from ${path}`)
+      }
+      if (res.error) {
+        alert(`This Error occurred: ${res.error}`)
+        return
+      }
+      func(res.data as T | undefined)
+      return
+    }
+
+    if (onError) {
+      onError(x.status)
+      return
+    }
+    throw new Error(
+      `Http error ${x.status} occurred during an ${method} request to ${path}`
+    )
+  }
+
+  x.send(body === null || body === undefined ? null : JSON.stringify(body))
 }
 
 // Print namespace/object with rendering functions
@@ -611,10 +889,13 @@ const printObj = {
         }
       }
 
-      // Use event delegation for detail view too
+      // Use event delegation for detail view too. Use onclick (property
+      // assignment) so repeat visits replace the prior handler — otherwise
+      // each Add click would call showAddToPlaylistBubble N times and
+      // duplicate entries in the popover.
       const container = $("c4")
 
-      container.addEventListener("click", (e) => {
+      container.onclick = (e: MouseEvent) => {
         let target = e.target as HTMLElement
 
         if (target.id === "playSong") {
@@ -634,11 +915,15 @@ const printObj = {
         }
 
         if (target.id === "addSong") {
+          e.stopPropagation()
           const songDiv = document.getElementById("song")
           if (songDiv) {
             const songId = songDiv.getAttribute("data-song-id")
             if (songId && songRegistry[songId]) {
-              playlist.push(songRegistry[songId].song)
+              showAddToPlaylistBubble(
+                songRegistry[songId].song,
+                target,
+              )
             }
           }
         }
@@ -659,7 +944,7 @@ const printObj = {
             }
           }
         }
-      })
+      }
     })
   },
 
@@ -760,6 +1045,188 @@ const printObj = {
       })
     })
   },
+
+  // List view in c2: all playlists, with a "+ New playlist" row at the top
+  // that prompts for a name and creates the playlist via POST.
+  playlists(): void {
+    currentTab = "playlists"
+    currentPlaylistId = null
+    setActiveTab("playlists")
+    $("c2").innerHTML = ""
+    $("c3").innerHTML = ""
+    $("c4").innerHTML = ""
+    $("c2").style.display = "inline-block"
+    $("c3").style.display = ""
+
+    // Build standalone and appendChild — shaven's parent-syntax returns the
+    // parent as rootElement, so attaching the handler to that would bind it
+    // to c2 itself and fire on every click that bubbles through it.
+    const newRow = shaven(
+      ["div#.row.newPlaylist",
+        ["a", "+ New playlist"]
+      ]
+    ).rootElement
+    newRow.addEventListener("click", (e: Event) => {
+      e.preventDefault()
+      createPlaylistFlow()
+    })
+    $("c2").appendChild(newRow)
+
+    ajax<PlaylistSummary[]>("/playlists", (playlists) => {
+      playlists
+        .slice()
+        .sort((a, b) =>
+          a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+        )
+        .forEach((playlist) => {
+          const link = shaven(["a", playlist.name]).rootElement
+          link.addEventListener("click", (e: Event) => {
+            e.preventDefault()
+            const parent = link.parentNode as HTMLElement | null
+            if (parent) highlight(parent)
+            printObj.playlist(playlist.id)
+            history.pushState(
+              { "url": "playlists/" + playlist.id },
+              playlist.name,
+              baseURL + "/playlists/" + playlist.id
+            )
+          })
+          link.addEventListener("dblclick", (e: Event) => {
+            e.preventDefault()
+            e.stopPropagation()
+            ajax<Playlist>(`/playlists/${playlist.id}`, (full) => {
+              const idx = full.tracks.findIndex((t) => t.available)
+              if (idx === -1) return
+              playPlaylistTrack(full.id, idx, full.tracks[idx])
+            })
+          })
+          shaven(
+            [$("c2"),
+              ["div#.row", {
+                "title": playlist.name,
+                "data-playlist-id": playlist.id,
+              },
+                [link]
+              ]
+            ]
+          )
+        })
+
+      updatePlayingMarkers()
+    })
+  },
+
+  // Detail of a single playlist: tracks in c3, metadata/rename/delete in c4.
+  playlist(id: string): void {
+    ajax<Playlist>(`/playlists/${id}`, (playlist) => {
+      currentPlaylistId = playlist.id
+      $("c3").innerHTML = ""
+      $("c3").style.display = ""
+
+      playlist.tracks.forEach((track, index) => {
+        const link = shaven(["a", track.title]).rootElement
+        const play = shaven(["button#.play"]).rootElement
+        const remove = shaven(["button#.remove"]).rootElement
+
+        const row = shaven(
+          ["div#.row", {
+            "title": (track.track_artist || "") + " — " + track.title,
+            "data-playlist-index": String(index),
+            "data-artist-slug": track.artist_slug,
+            "data-song-slug": track.slug,
+          },
+            [play],
+            [link],
+            [remove],
+          ]
+        ).rootElement
+
+        if (!track.available) row.classList.add("unavailable")
+        $("c3").appendChild(row)
+      })
+
+      $("c3").onclick = (e: MouseEvent) => {
+        const target = e.target as HTMLElement
+        const row = target.closest(".row") as HTMLElement | null
+        if (!row) return
+        const idxAttr = row.getAttribute("data-playlist-index")
+        if (idxAttr === null) return
+        const idx = parseInt(idxAttr, 10)
+        const track = playlist.tracks[idx]
+        if (!track) return
+
+        if (target.classList.contains("play")) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (track.available) playPlaylistTrack(playlist.id, idx, track)
+          return
+        }
+        if (target.classList.contains("remove")) {
+          e.preventDefault()
+          e.stopPropagation()
+          removePlaylistTrack(playlist.id, idx)
+          return
+        }
+        if (target.tagName.toLowerCase() === "a") {
+          e.preventDefault()
+          highlight(row)
+          if (track.available) {
+            printObj.song(track.slug, track.artist_slug)
+            const url = `playlists/${playlist.id}/${idx}`
+            history.pushState({ "url": url }, track.slug, baseURL + "/" + url)
+          }
+        }
+      }
+
+      $("c3").ondblclick = (e: MouseEvent) => {
+        const target = e.target as HTMLElement
+        const row = target.closest(".row") as HTMLElement | null
+        if (!row) return
+        const idxAttr = row.getAttribute("data-playlist-index")
+        if (idxAttr === null) return
+        const idx = parseInt(idxAttr, 10)
+        const track = playlist.tracks[idx]
+        if (!track || !track.available) return
+        e.preventDefault()
+        e.stopPropagation()
+        playPlaylistTrack(playlist.id, idx, track)
+      }
+
+      // Detail view: name (with rename) + delete + track count.
+      $("c4").innerHTML = ""
+      shaven(
+        [$("c4"),
+          ["div#playlistDetail",
+            ["button#renamePlaylist", "Rename"],
+            ["button#deletePlaylist", "Delete"],
+            ["nav#playlistNav",
+              ["h2#heading", playlist.name],
+              ["p#playlistCount",
+                playlist.tracks.length === 1
+                  ? "1 track"
+                  : playlist.tracks.length + " tracks"
+              ],
+            ],
+          ]
+        ]
+      )
+
+      const renameEl = document.getElementById("renamePlaylist")
+      if (renameEl) {
+        renameEl.addEventListener("click", () => {
+          renamePlaylistFlow(playlist.id, playlist.name)
+        })
+      }
+      const deleteEl = document.getElementById("deletePlaylist")
+      if (deleteEl) {
+        deleteEl.addEventListener("click", () => {
+          deletePlaylistFlow(playlist.id, playlist.name)
+        })
+      }
+
+      updatePlayingMarkers()
+    })
+  },
 }
 
 function viewController(): Record<string, Function> {
@@ -791,7 +1258,8 @@ function viewController(): Record<string, Function> {
             ["div#c2"],
             ["div#c3"],
             ["div#c4"],
-            ["div#Bubble.bubble", {style: "display:none"}]
+            ["div#Bubble.bubble", {style: "display:none"}],
+            ["div#addToPlaylistBubble.bubble", {style: "display:none"}]
           ]
         ]
       )
@@ -835,6 +1303,14 @@ function viewController(): Record<string, Function> {
         printObj.allSongs()
       })
 
+      $("playlists").addEventListener("click", () => {
+        ;($("search") as HTMLInputElement).value = ""
+        printObj.playlists()
+        history.pushState(
+          { "url": "playlists" }, "Playlists", baseURL + "/playlists"
+        )
+      })
+
       $("settings").addEventListener("click", (e: Event) => {
         showSettings()
         e.stopPropagation()
@@ -861,7 +1337,33 @@ function viewController(): Record<string, Function> {
       printObj.artists()
       printObj.songs(dirs[0])
       printObj.song(dirs[1], dirs[0])
-    }
+    },
+
+    playlists(): void {
+      printObj.playlists()
+    },
+
+    playlist(id: string): void {
+      printObj.playlists()
+      printObj.playlist(id)
+    },
+
+    playlistTrack(id: string, indexStr: string): void {
+      printObj.playlists()
+      printObj.playlist(id)
+      // After the playlist renders, highlight + open the indexed track.
+      // printObj.playlist completes inside an ajax callback, so defer.
+      ajax<Playlist>(`/playlists/${id}`, (playlist) => {
+        const idx = parseInt(indexStr, 10)
+        const track = playlist.tracks[idx]
+        if (!track || !track.available) return
+        printObj.song(track.slug, track.artist_slug)
+        const row = $("c3").querySelector(
+          `.row[data-playlist-index="${idx}"]`
+        ) as HTMLElement | null
+        if (row) highlight(row)
+      })
+    },
   }
 }
 
@@ -893,6 +1395,17 @@ function route(state: string | { url?: string }): void {
   function fromURL(url: string): void {
     const dirs = url.split("/")
     const view = viewController()
+
+    if (dirs[0] === "playlists") {
+      if (dirs.length === 1) view.playlists()
+      else if (dirs.length === 2) view.playlist(dirs[1])
+      else if (dirs.length === 3) view.playlistTrack(dirs[1], dirs[2])
+      else {
+        alert("This website is not available")
+        throw new Error("Can not route the URL " + url)
+      }
+      return
+    }
 
     if (dirs.length === 1 && dirs[0] !== "") view.artist(dirs[0])
       else if (dirs.length === 2) view.song(dirs)

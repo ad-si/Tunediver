@@ -519,6 +519,37 @@ input[type="search"] {
   color: var(--accent);
 }
 
+/* Track that the playlist references but the catalog no longer contains
+   (file removed or retagged) — visible but de-emphasised and not playable. */
+.row.unavailable {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.row.unavailable .play {
+  display: none !important;
+}
+
+/* "+ New playlist" entry in the playlists list and the add-to-playlist
+   popover — visually distinguished from regular rows. */
+.row.newPlaylist {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.row .remove:before {
+  content: "\00D7";
+  position: relative;
+  left: 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.row .remove {
+  left: auto;
+  right: 0;
+}
+
 /* Sits inside the existing 20px-wide button gutter so the song title
    stays anchored — exactly like the hover play button. */
 .row.playing::before {
