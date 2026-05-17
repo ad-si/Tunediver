@@ -141,7 +141,6 @@ function playSong(
     if (playEl) {
       playEl.className = "paused"
     }
-    setFavicon(false)
   }
 
   try {
@@ -165,7 +164,6 @@ function playSong(
       if (playEl) {
         playEl.className = "paused"
       }
-      setFavicon(false)
       newAudio.currentTime = 0
       playerUpdater()
       updatePlayingMarkers()

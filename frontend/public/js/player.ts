@@ -56,7 +56,6 @@ function initPlayer () {
     if (playEl) {
       playEl.className = "paused"
     }
-    setFavicon(false);
     audio.currentTime = 0;
     playerUpdater();
 
@@ -195,50 +194,6 @@ function initPlayer () {
   }
 }
 
-function setFavicon(state: boolean): void {
-  const canvas = document.createElement("canvas")
-  const ctx = canvas.getContext("2d")
-  const img = document.createElement("img")
-  const faviconEl = document.getElementById("favicon")
-
-  if (!faviconEl) {
-    throw new Error("Favicon element not found")
-  }
-
-  const link = faviconEl.cloneNode(true) as HTMLLinkElement
-
-  if (state) {
-    canvas.height = canvas.width = 32
-
-    img.onload = () => {
-      if (ctx) {
-        ctx.drawImage(img, 0, 0)
-        ctx.font = "900 28px sans-serif"
-        ctx.fillStyle = "#000"
-        ctx.fillText("\u25B6", 5, 28)
-
-        link.href = canvas.toDataURL("image/png")
-        link.id = "faviconPlay"
-        document.head.appendChild(link)
-      }
-    }
-    img.src = baseURL + "/img/favicon.png"
-  }
-  else if (!state) {
-    const faviconPlay = document.getElementById("faviconPlay")
-    if (faviconPlay) {
-      document.head.removeChild(faviconPlay)
-    }
-    const favicon = document.getElementById("favicon") as HTMLLinkElement
-    if (favicon) {
-      favicon.href = baseURL + "/img/favicon.png"
-    }
-  }
-  else {
-    throw new Error(String(state) + "is not a possible state of the favicon.")
-  }
-}
-
 function setPlayingState(state: "playing" | "paused"): void {
   const playEl = document.getElementById("play")
   if (!playEl) {
@@ -248,12 +203,10 @@ function setPlayingState(state: "playing" | "paused"): void {
   if (state === "playing") {
     audio.play()
     playEl.className = "playing"
-    setFavicon(true)
   }
   else if (state === "paused") {
     audio.pause()
     playEl.className = "paused"
-    setFavicon(false)
   }
   else {
     throw new Error("Unknown playing state:" + state)
