@@ -593,6 +593,11 @@ struct PlaylistSummary {
   track_count: usize,
   created_at: u64,
   updated_at: u64,
+  // Only set when the `/playlists` endpoint is queried with `?artist=&title=`,
+  // so the UI's "add to playlist" bubble can pre-disable playlists that
+  // already contain the song.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  contains_song: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -652,13 +657,23 @@ struct TrackRefInput {
   title: String,
 }
 
-fn summarize(playlist: &Playlist) -> PlaylistSummary {
+fn summarize(
+  playlist: &Playlist,
+  contains: Option<(&str, &str)>,
+) -> PlaylistSummary {
+  let contains_song = contains.map(|(artist, title)| {
+    playlist
+      .tracks
+      .iter()
+      .any(|t| t.artist == artist && t.title == title)
+  });
   PlaylistSummary {
     id: playlist.id.clone(),
     name: playlist.name.clone(),
     track_count: playlist.tracks.len(),
     created_at: playlist.created_at,
     updated_at: playlist.updated_at,
+    contains_song,
   }
 }
 
@@ -703,11 +718,19 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
   }
 }
 
-#[get("/playlists")]
-fn list_playlists(store: &State<PlaylistStore>) -> Json<PlaylistListResponse> {
+#[get("/playlists?<artist>&<title>")]
+fn list_playlists(
+  artist: Option<&str>,
+  title: Option<&str>,
+  store: &State<PlaylistStore>,
+) -> Json<PlaylistListResponse> {
   let playlists = store.playlists.read().expect("playlists lock poisoned");
+  let contains = match (artist, title) {
+    (Some(a), Some(t)) if !a.is_empty() && !t.is_empty() => Some((a, t)),
+    _ => None,
+  };
   Json(PlaylistListResponse {
-    data: playlists.iter().map(summarize).collect(),
+    data: playlists.iter().map(|p| summarize(p, contains)).collect(),
   })
 }
 
@@ -818,6 +841,13 @@ fn add_playlist_track(
     .iter_mut()
     .find(|p| p.id == id)
     .ok_or(Status::NotFound)?;
+  if playlist
+    .tracks
+    .iter()
+    .any(|t| t.artist == artist && t.title == title)
+  {
+    return Err(Status::Conflict);
+  }
   playlist.tracks.push(TrackRef {
     artist: artist.to_string(),
     title: title.to_string(),

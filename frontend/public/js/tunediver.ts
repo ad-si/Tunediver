@@ -429,7 +429,13 @@ function showAddToPlaylistBubble(song: Song, anchor: HTMLElement): void {
   bubble.style.overflowY = "auto"
   bubble.style.padding = "6px 0"
 
-  ajax<PlaylistSummary[]>("/playlists", (playlists) => {
+  // Query with artist+title so the response marks playlists that already
+  // contain this song — those rows are rendered non-clickable.
+  const artistParam = encodeURIComponent(song.track_artist || "")
+  const titleParam = encodeURIComponent(song.title || "")
+  const listUrl = `/playlists?artist=${artistParam}&title=${titleParam}`
+
+  ajax<PlaylistSummary[]>(listUrl, (playlists) => {
     const newRow = shaven(
       ["div#.row.newPlaylist", ["a", "+ New playlist…"]]
     ).rootElement
@@ -457,16 +463,22 @@ function showAddToPlaylistBubble(song: Song, anchor: HTMLElement): void {
         a.name.toLowerCase().localeCompare(b.name.toLowerCase())
       )
       .forEach((pl) => {
+        const alreadyAdded = pl.contains_song === true
         const row = shaven(
           ["div#.row", { "data-playlist-id": pl.id },
             ["a", pl.name]
           ]
         ).rootElement
-        row.addEventListener("click", (e: Event) => {
-          e.preventDefault()
-          e.stopPropagation()
-          addSongToPlaylist(pl.id, song, anchor)
-        })
+        if (alreadyAdded) {
+          row.classList.add("alreadyAdded")
+          row.setAttribute("title", `Already in "${pl.name}"`)
+        } else {
+          row.addEventListener("click", (e: Event) => {
+            e.preventDefault()
+            e.stopPropagation()
+            addSongToPlaylist(pl.id, song, anchor)
+          })
+        }
         bubble.appendChild(row)
       })
 
@@ -483,17 +495,29 @@ function addSongToPlaylist(
   const title = song.title || ""
   if (!artist || !title) return
 
+  const flashAnchor = (text: string): void => {
+    $("addToPlaylistBubble").style.display = "none"
+    const original = anchor.textContent || "Add"
+    anchor.textContent = text
+    window.setTimeout(() => {
+      anchor.textContent = original
+    }, 1500)
+  }
+
   ajaxMutate<Playlist>(
     "POST",
     `/playlists/${playlistId}/tracks`,
     { artist, title },
-    () => {
-      $("addToPlaylistBubble").style.display = "none"
-      const original = anchor.textContent || "Add"
-      anchor.textContent = "Added!"
-      window.setTimeout(() => {
-        anchor.textContent = original
-      }, 1500)
+    () => flashAnchor("Added!"),
+    (status) => {
+      // 409: the song is already in the playlist. The bubble normally
+      // disables those rows up front, but a stale list (another tab/window
+      // added the song since the bubble opened) can land us here.
+      if (status === 409) {
+        flashAnchor("Already added")
+        return
+      }
+      throw new Error(`Add to playlist failed: ${status}`)
     }
   )
 }

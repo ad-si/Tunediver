@@ -44,6 +44,9 @@ type PlaylistSummary = {
   track_count: number
   created_at: number
   updated_at: number
+  // Present only when /playlists is queried with ?artist=&title= — lets the
+  // add-to-playlist bubble disable playlists that already contain the song.
+  contains_song?: boolean
 }
 
 type PlaylistTrack = {

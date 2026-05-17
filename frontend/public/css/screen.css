@@ -537,6 +537,14 @@ input[type="search"] {
   font-style: italic;
 }
 
+/* Add-to-playlist bubble row for a playlist that already contains the
+   current song — shown but non-interactive. */
+.row.alreadyAdded {
+  color: var(--text-muted);
+  cursor: default;
+  pointer-events: none;
+}
+
 .row .remove:before {
   content: "\00D7";
   position: relative;
