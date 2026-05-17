@@ -225,7 +225,23 @@ function playAdjacentSong(direction: 1 | -1): void {
       if (idx === -1) return
       const target = songs[idx + direction]
       if (!target) return
-      playSong(target, target.artist_slug || "", false)
+      const targetArtistSlug = target.artist_slug || ""
+      playSong(target, targetArtistSlug, false)
+
+      // Mirror the Songs-tab click behaviour: highlight the new row in c2,
+      // render its detail in c4, and update the URL so the page reflects
+      // whatever is currently playing.
+      const newRow = $("c2").querySelector(
+        `.row[data-artist-slug="${CSS.escape(targetArtistSlug)}"]`
+        + `[data-song-slug="${CSS.escape(target.slug)}"]`
+      ) as HTMLElement | null
+      if (newRow) {
+        highlight(newRow)
+        newRow.scrollIntoView({ block: "nearest" })
+      }
+      printObj.song(target.slug, targetArtistSlug)
+      const url = targetArtistSlug + "/" + target.slug
+      history.pushState({"url": url}, target.slug, baseURL + "/" + url)
     })
     return
   }
