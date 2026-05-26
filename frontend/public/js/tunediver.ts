@@ -212,6 +212,16 @@ function playSong(
     // that happen to contain HTML-special characters are rendered as text.
     $("playerInfo").textContent = (song.track_artist || "") + " - " + song.title
 
+    // Populating MediaSession metadata is what makes macOS route the
+    // next/previous media keys to this tab. Without it, only play/pause
+    // (handled by the audio element directly) reaches the page.
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: song.title,
+        artist: song.track_artist || "",
+      })
+    }
+
     // Update URL only if explicitly requested
     if (updateUrl && song.slug) {
       const url = artistName + "/" + song.slug

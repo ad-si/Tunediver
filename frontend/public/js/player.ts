@@ -106,6 +106,21 @@ function initPlayer () {
       nextEl.addEventListener("click", () => playAdjacentSong(1), false)
     }
 
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.setActionHandler("play", () => {
+        if (audio.src) setPlayingState("playing")
+      })
+      navigator.mediaSession.setActionHandler("pause", () => {
+        setPlayingState("paused")
+      })
+      navigator.mediaSession.setActionHandler("previoustrack", () => {
+        playAdjacentSong(-1)
+      })
+      navigator.mediaSession.setActionHandler("nexttrack", () => {
+        playAdjacentSong(1)
+      })
+    }
+
     const progressInputEl = document.getElementById("progressInput") as HTMLInputElement
 
     if (progressInputEl) {
@@ -203,10 +218,16 @@ function setPlayingState(state: "playing" | "paused"): void {
   if (state === "playing") {
     audio.play()
     playEl.className = "playing"
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "playing"
+    }
   }
   else if (state === "paused") {
     audio.pause()
     playEl.className = "paused"
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "paused"
+    }
   }
   else {
     throw new Error("Unknown playing state:" + state)

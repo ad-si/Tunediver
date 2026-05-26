@@ -31,3 +31,9 @@ start:
 website-serve:
 	@echo "Serving website on http://localhost:8080"
 	cd website && python3 -m http.server 8080
+
+
+.PHONY: restart
+restart:
+	cd server && cargo build --release
+	launchctl kickstart -k gui/$(shell id -u)/com.tunediver.server
