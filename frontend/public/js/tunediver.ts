@@ -337,6 +337,30 @@ function playPlaylistTrack(
   }
 }
 
+// Rescan the music folder on the server, then re-render whatever view is
+// currently showing so newly added (or removed) tracks appear. The currently
+// playing audio is left untouched.
+function reloadCatalog(): void {
+  const button = document.getElementById("reload")
+  if (button) button.classList.add("spinning")
+  ajaxMutate<{ track_count: number }>(
+    "POST",
+    "/reload",
+    null,
+    () => {
+      if (button) button.classList.remove("spinning")
+      const path = location.pathname.slice(
+        baseURL.length + 1, location.pathname.length
+      )
+      route(path)
+    },
+    (status) => {
+      if (button) button.classList.remove("spinning")
+      throw new Error(`Reload failed: ${status}`)
+    }
+  )
+}
+
 // Prompt for a name, POST, then refresh the list and open the new playlist.
 function createPlaylistFlow(): void {
   const name = prompt("Playlist name")
@@ -1271,6 +1295,7 @@ function viewController(): Record<string, Function> {
                 ]
               ],
               ["div#controls"],
+              ["button#reload", { "title": "Rescan music folder" }],
               ["button#settings"]
             ],
             ["div#c1",
@@ -1333,6 +1358,11 @@ function viewController(): Record<string, Function> {
         history.pushState(
           { "url": "playlists" }, "Playlists", baseURL + "/playlists"
         )
+      })
+
+      $("reload").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        reloadCatalog()
       })
 
       $("settings").addEventListener("click", (e: Event) => {

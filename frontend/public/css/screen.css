@@ -347,6 +347,26 @@ h3 {
   vertical-align: middle;
 }
 
+#reload {
+  background: transparent;
+  position: absolute;
+  right: 90px;
+}
+
+#reload:before {
+  content: '\27F3';
+  font-size: 26px;
+  display: inline-block;
+}
+
+#reload.spinning:before {
+  animation: reload-spin 0.8s linear infinite;
+}
+
+@keyframes reload-spin {
+  to { transform: rotate(360deg); }
+}
+
 #settings {
   background: transparent;
   position: absolute;

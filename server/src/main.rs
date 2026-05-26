@@ -40,7 +40,10 @@ struct Catalog {
 
 #[derive(Debug)]
 struct AppConfig {
-  catalog: Catalog,
+  // Root scanned to build the catalog. Retained so /api/reload can
+  // rebuild against the same source without re-reading Rocket config.
+  music_path: PathBuf,
+  catalog: RwLock<Catalog>,
 }
 
 // Helper function to check if a file is an audio file. Includes a few
@@ -423,7 +426,7 @@ struct ErrorResponse {
 fn get_artists(config: &State<AppConfig>) -> Json<ArtistResponse> {
   Json(ArtistResponse {
     error: false,
-    data: config.catalog.list_artists(),
+    data: config.catalog.read().unwrap().list_artists(),
   })
 }
 
@@ -431,8 +434,8 @@ fn get_artists(config: &State<AppConfig>) -> Json<ArtistResponse> {
 // (case-insensitive) so the "Songs" tab can display a flat list.
 #[get("/songs")]
 fn get_all_songs(config: &State<AppConfig>) -> Json<SongResponse> {
-  let mut songs: Vec<Song> =
-    config.catalog.tracks.iter().map(track_to_song).collect();
+  let catalog = config.catalog.read().unwrap();
+  let mut songs: Vec<Song> = catalog.tracks.iter().map(track_to_song).collect();
   songs.sort_by(|a, b| {
     a.title
       .to_lowercase()
@@ -455,8 +458,8 @@ fn get_artist_songs(
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| artist.to_string());
 
-  let songs = config
-    .catalog
+  let catalog = config.catalog.read().unwrap();
+  let songs = catalog
     .tracks_by_artist(&decoded_artist)
     .into_iter()
     .map(track_to_song)
@@ -475,7 +478,8 @@ fn get_song(
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| artist.to_string());
 
-  match config.catalog.find_track(&decoded_artist, song) {
+  let catalog = config.catalog.read().unwrap();
+  match catalog.find_track(&decoded_artist, song) {
     Some(track) => {
       let file_name = track
         .path
@@ -540,8 +544,8 @@ fn get_song_cover(
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| artist.to_string());
 
-  let track = config
-    .catalog
+  let catalog = config.catalog.read().unwrap();
+  let track = catalog
     .find_track(&decoded_artist, song)
     .ok_or_else(|| NotFound("Track not found".to_string()))?;
 
@@ -580,6 +584,32 @@ fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
       bio: format!("This is the bio of {}", decoded),
       country: "Someland".to_string(),
     },
+  })
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ReloadData {
+  track_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ReloadResponse {
+  data: ReloadData,
+}
+
+// Rescan the music directory and replace the in-memory catalog. Used
+// when files have been added/removed/retagged on disk while the server
+// is running, so the UI can pick up changes without a restart.
+#[post("/reload")]
+fn reload_catalog(config: &State<AppConfig>) -> Json<ReloadResponse> {
+  let new_catalog = build_catalog(&config.music_path);
+  let track_count = new_catalog.tracks.len();
+  *config.catalog.write().unwrap() = new_catalog;
+  println!("Reloaded catalog: {} track(s)", track_count);
+  Json(ReloadResponse {
+    data: ReloadData { track_count },
   })
 }
 
@@ -780,7 +810,7 @@ fn get_playlist(
     .find(|p| p.id == id)
     .ok_or(Status::NotFound)?;
   Ok(Json(PlaylistDetailResponse {
-    data: hydrate(playlist, &config.catalog),
+    data: hydrate(playlist, &config.catalog.read().unwrap()),
   }))
 }
 
@@ -803,7 +833,7 @@ fn rename_playlist(
     .ok_or(Status::NotFound)?;
   playlist.name = name.to_string();
   playlist.updated_at = now_secs();
-  let detail = hydrate(playlist, &config.catalog);
+  let detail = hydrate(playlist, &config.catalog.read().unwrap());
   store.save(&playlists);
   Ok(Json(PlaylistDetailResponse { data: detail }))
 }
@@ -853,7 +883,7 @@ fn add_playlist_track(
     title: title.to_string(),
   });
   playlist.updated_at = now_secs();
-  let detail = hydrate(playlist, &config.catalog);
+  let detail = hydrate(playlist, &config.catalog.read().unwrap());
   store.save(&playlists);
   Ok(Json(PlaylistDetailResponse { data: detail }))
 }
@@ -875,7 +905,7 @@ fn remove_playlist_track(
   }
   playlist.tracks.remove(index);
   playlist.updated_at = now_secs();
-  let detail = hydrate(playlist, &config.catalog);
+  let detail = hydrate(playlist, &config.catalog.read().unwrap());
   store.save(&playlists);
   Ok(Json(PlaylistDetailResponse { data: detail }))
 }
@@ -901,7 +931,7 @@ fn reorder_playlist_tracks(
     })
     .collect();
   playlist.updated_at = now_secs();
-  let detail = hydrate(playlist, &config.catalog);
+  let detail = hydrate(playlist, &config.catalog.read().unwrap());
   store.save(&playlists);
   Ok(Json(PlaylistDetailResponse { data: detail }))
 }
@@ -932,8 +962,12 @@ async fn get_music_file(
   config: &State<AppConfig>,
 ) -> Option<FileWithRanges> {
   let decoded_artist = urlencoding::decode(artist).ok()?.into_owned();
-  let track = config.catalog.find_track(&decoded_artist, song)?;
-  let named_file = rocket::fs::NamedFile::open(&track.path).await.ok()?;
+  let track_path = {
+    let catalog = config.catalog.read().unwrap();
+    let track = catalog.find_track(&decoded_artist, song)?;
+    track.path.clone()
+  };
+  let named_file = rocket::fs::NamedFile::open(&track_path).await.ok()?;
   Some(FileWithRanges(named_file))
 }
 
@@ -985,7 +1019,10 @@ fn rocket() -> _ {
   println!("Loading playlists from: {}", playlists_path.display());
   let playlist_store = PlaylistStore::load(playlists_path);
 
-  let config = AppConfig { catalog };
+  let config = AppConfig {
+    music_path: PathBuf::from(&music_path),
+    catalog: RwLock::new(catalog),
+  };
 
   rocket::build()
     .mount("/", FileServer::from("../frontend/public"))
@@ -999,6 +1036,7 @@ fn rocket() -> _ {
         get_song,
         get_song_cover,
         get_music_file,
+        reload_catalog,
         list_playlists,
         create_playlist,
         get_playlist,
