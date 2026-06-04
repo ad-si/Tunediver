@@ -350,20 +350,40 @@ function playPlaylistTrack(
 // Rescan the music folder on the server, then re-render whatever view is
 // currently showing so newly added (or removed) tracks appear. The currently
 // playing audio is left untouched.
+//
+// The server scans in the background and the POST returns immediately, so the
+// button keeps spinning while we poll /scan-status, and we re-render only once
+// the scan has finished (so the refreshed view reflects the new catalog).
 function reloadCatalog(): void {
   const button = document.getElementById("reload")
   if (button) button.classList.add("spinning")
+
+  const stopAndRender = (): void => {
+    if (button) button.classList.remove("spinning")
+    const path = location.pathname.slice(
+      baseURL.length + 1, location.pathname.length
+    )
+    route(path)
+  }
+
+  const poll = (): void => {
+    ajax<{ scanning: boolean; track_count: number }>(
+      "/scan-status",
+      (status) => {
+        if (status.scanning) {
+          window.setTimeout(poll, 1000)
+        } else {
+          stopAndRender()
+        }
+      }
+    )
+  }
+
   ajaxMutate<{ track_count: number }>(
     "POST",
     "/reload",
     null,
-    () => {
-      if (button) button.classList.remove("spinning")
-      const path = location.pathname.slice(
-        baseURL.length + 1, location.pathname.length
-      )
-      route(path)
-    },
+    () => poll(),
     (status) => {
       if (button) button.classList.remove("spinning")
       throw new Error(`Reload failed: ${status}`)

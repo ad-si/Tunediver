@@ -1,12 +1,15 @@
 #[macro_use]
 extern crate rocket;
+mod db;
+
 use rocket::fs::FileServer;
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::State;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lofty::config::ParseOptions;
@@ -38,12 +41,18 @@ struct Catalog {
   tracks: Vec<Track>,
 }
 
-#[derive(Debug)]
 struct AppConfig {
   // Root scanned to build the catalog. Retained so /api/reload can
   // rebuild against the same source without re-reading Rocket config.
   music_path: PathBuf,
-  catalog: RwLock<Catalog>,
+  // Connection pool to the SQLite cache (tag metadata + cover art).
+  pool: db::Pool,
+  // In-memory projection of the `tracks` table, serving the list endpoints.
+  // Arc so a background scan thread can swap in a freshly rebuilt catalog.
+  catalog: Arc<RwLock<Catalog>>,
+  // True while a background scan runs; gates /api/scan-status and prevents
+  // overlapping scans.
+  scanning: Arc<AtomicBool>,
 }
 
 // Helper function to check if a file is an audio file. Includes a few
@@ -175,26 +184,151 @@ fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) {
   }
 }
 
-// Scan `music_path` for audio files and build the tag-driven catalog.
-// Paths and filenames only serve as a way to *locate* the files on disk;
-// all user-visible metadata comes from the tags.
-fn build_catalog(music_path: &Path) -> Catalog {
+// Extract the first embedded cover picture as (has_cover, bytes, mime). Called
+// only during a scan, so the per-request cover endpoint can serve from the
+// cache without reopening the (possibly slow) audio file. `has_cover == false`
+// is stored as a negative cache entry so missing art isn't re-probed.
+fn read_cover(path: &Path) -> (bool, Option<Vec<u8>>, Option<String>) {
+  let tagged = match read_from_path(path) {
+    Ok(t) => t,
+    Err(_) => return (false, None, None),
+  };
+  let tag = match tagged.primary_tag().or_else(|| tagged.first_tag()) {
+    Some(t) => t,
+    None => return (false, None, None),
+  };
+  let picture = match tag.pictures().first() {
+    Some(p) => p,
+    None => return (false, None, None),
+  };
+  let mime = match picture.mime_type() {
+    Some(MimeType::Png) => "image/png",
+    Some(MimeType::Bmp) => "image/bmp",
+    Some(MimeType::Gif) => "image/gif",
+    Some(MimeType::Tiff) => "image/tiff",
+    _ => "image/jpeg",
+  };
+  (true, Some(picture.data().to_vec()), Some(mime.to_string()))
+}
+
+// (mtime_secs, size) for change detection. Returns (0, 0) if the file can't
+// be stat'd, which forces a re-read on the next scan.
+fn file_stamp(path: &Path) -> (i64, i64) {
+  match fs::metadata(path) {
+    Ok(m) => {
+      let mtime = m
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+      (mtime, m.len() as i64)
+    }
+    Err(_) => (0, 0),
+  }
+}
+
+// Start a background scan unless one is already running. Returns immediately;
+// the catalog is swapped in atomically once the scan finishes.
+fn spawn_scan(
+  pool: db::Pool,
+  music_path: PathBuf,
+  catalog: Arc<RwLock<Catalog>>,
+  scanning: Arc<AtomicBool>,
+) {
+  if scanning
+    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    .is_err()
+  {
+    println!("Scan already in progress; ignoring request");
+    return;
+  }
+  std::thread::spawn(move || {
+    run_scan(&pool, &music_path, &catalog);
+    scanning.store(false, Ordering::SeqCst);
+  });
+}
+
+// Reconcile the cache with the music folder, then rebuild the in-memory
+// catalog. Files are re-read (tags, lyrics, DATE_ADDED, cover) only when new or
+// changed by mtime/size; rows for vanished files are deleted. Paths and
+// filenames only *locate* files on disk; all user-visible metadata comes from
+// the tags.
+fn run_scan(pool: &db::Pool, music_path: &Path, catalog: &RwLock<Catalog>) {
+  let conn = match pool.get() {
+    Ok(c) => c,
+    Err(e) => {
+      eprintln!("Scan: cache connection unavailable: {}", e);
+      return;
+    }
+  };
+
   let mut paths = Vec::new();
   collect_audio_files(music_path, &mut paths);
-  // Sort so the catalog ordering is deterministic across restarts.
+  // Sort so the catalog ordering (and thus IDs) is deterministic.
   paths.sort();
 
-  let mut tracks = Vec::with_capacity(paths.len());
-  for (id, path) in paths.into_iter().enumerate() {
-    let (artist, title) = read_track_tags(&path);
-    tracks.push(Track {
-      id,
+  let existing = db::load_track_stamps(&conn).unwrap_or_else(|e| {
+    eprintln!("Scan: could not read cached stamps: {}", e);
+    HashMap::new()
+  });
+
+  let mut seen: HashSet<String> = HashSet::with_capacity(paths.len());
+  let mut changed = 0usize;
+  for path in &paths {
+    let path_str = path.to_string_lossy().to_string();
+    let (mtime, size) = file_stamp(path);
+    seen.insert(path_str.clone());
+
+    // Skip files that are unchanged since the last scan.
+    if let Some((m, s)) = existing.get(&path_str) {
+      if *m == mtime && *s == size {
+        continue;
+      }
+    }
+
+    let (artist, title) = read_track_tags(path);
+    let lyrics = read_track_lyrics(path);
+    let date_added = read_id3v2_user_text(path, "DATE_ADDED");
+    let (has_cover, cover_blob, cover_mime) = read_cover(path);
+    let track = db::CachedTrack {
+      path: path_str,
+      mtime,
+      size,
       artist,
       title,
-      path,
-    });
+      lyrics,
+      date_added,
+      has_cover,
+      cover_blob,
+      cover_mime,
+    };
+    if let Err(e) = db::upsert_track(&conn, &track) {
+      eprintln!("Scan: failed to cache {}: {}", track.path, e);
+    }
+    changed += 1;
   }
-  Catalog { tracks }
+
+  // Drop rows for files that disappeared from disk.
+  for path_str in existing.keys() {
+    if !seen.contains(path_str) {
+      if let Err(e) = db::delete_track(&conn, path_str) {
+        eprintln!("Scan: failed to remove {}: {}", path_str, e);
+      }
+    }
+  }
+
+  match db::load_catalog(&conn) {
+    Ok(new_catalog) => {
+      let count = new_catalog.tracks.len();
+      *catalog.write().unwrap() = new_catalog;
+      println!(
+        "Scan complete: {} track(s) ({} new/updated)",
+        count, changed
+      );
+    }
+    Err(e) => eprintln!("Scan: failed to rebuild catalog: {}", e),
+  }
 }
 
 impl Catalog {
@@ -261,9 +395,8 @@ struct PlaylistFile {
   playlists: Vec<Playlist>,
 }
 
-#[derive(Debug)]
 struct PlaylistStore {
-  path: PathBuf,
+  pool: db::Pool,
   playlists: RwLock<Vec<Playlist>>,
 }
 
@@ -285,55 +418,69 @@ fn generate_playlist_id() -> String {
   format!("pl_{:x}", nanos)
 }
 
+// Parse a legacy playlists.json file into playlists for one-time import.
+fn import_playlists_json(path: &Path) -> Option<Vec<Playlist>> {
+  let contents = fs::read_to_string(path).ok()?;
+  match serde_json::from_str::<PlaylistFile>(&contents) {
+    Ok(file) => Some(file.playlists),
+    Err(e) => {
+      eprintln!("Warning: could not parse {}: {}", path.display(), e);
+      None
+    }
+  }
+}
+
 impl PlaylistStore {
-  fn load(path: PathBuf) -> Self {
-    let playlists = match fs::read_to_string(&path) {
-      Ok(s) => match serde_json::from_str::<PlaylistFile>(&s) {
-        Ok(file) => file.playlists,
-        Err(e) => {
-          eprintln!(
-            "Warning: could not parse {}: {}. Starting with empty list.",
-            path.display(),
-            e
-          );
-          Vec::new()
-        }
-      },
-      Err(_) => Vec::new(),
+  // Load playlists from the cache database. On first run (empty table) the
+  // legacy `playlists.json` — if present — is imported once and persisted to
+  // the DB; the JSON file is left in place as a backup.
+  fn load(pool: db::Pool, json_fallback: &Path) -> Self {
+    let mut playlists = match pool.get() {
+      Ok(conn) => db::load_playlists(&conn).unwrap_or_else(|e| {
+        eprintln!("Warning: could not load playlists from cache: {}", e);
+        Vec::new()
+      }),
+      Err(e) => {
+        eprintln!("Warning: cache connection unavailable: {}", e);
+        Vec::new()
+      }
     };
+
+    if playlists.is_empty() {
+      if let Some(imported) = import_playlists_json(json_fallback) {
+        if !imported.is_empty() {
+          if let Ok(conn) = pool.get() {
+            if let Err(e) = db::save_playlists(&conn, &imported) {
+              eprintln!("Failed to import playlists into cache: {}", e);
+            }
+          }
+          println!(
+            "Imported {} playlist(s) from {}",
+            imported.len(),
+            json_fallback.display()
+          );
+          playlists = imported;
+        }
+      }
+    }
+
     PlaylistStore {
-      path,
+      pool,
       playlists: RwLock::new(playlists),
     }
   }
 
-  // Atomic-ish save: write to a temp file alongside the target and rename.
-  // Fails silently with a log line — playlist persistence is best-effort and
-  // the in-memory state remains authoritative for the current process.
+  // Persist the full playlist set to the cache database. Fails with a log line
+  // — persistence is best-effort and the in-memory state remains authoritative
+  // for the current process.
   fn save(&self, playlists: &[Playlist]) {
-    let file = PlaylistFile {
-      version: 1,
-      playlists: playlists.to_vec(),
-    };
-    let json = match serde_json::to_string_pretty(&file) {
-      Ok(s) => s,
-      Err(e) => {
-        eprintln!("Failed to serialize playlists: {}", e);
-        return;
+    match self.pool.get() {
+      Ok(conn) => {
+        if let Err(e) = db::save_playlists(&conn, playlists) {
+          eprintln!("Failed to save playlists: {}", e);
+        }
       }
-    };
-    let tmp = self.path.with_extension("json.tmp");
-    if let Err(e) = fs::write(&tmp, json) {
-      eprintln!("Failed to write {}: {}", tmp.display(), e);
-      return;
-    }
-    if let Err(e) = fs::rename(&tmp, &self.path) {
-      eprintln!(
-        "Failed to rename {} -> {}: {}",
-        tmp.display(),
-        self.path.display(),
-        e
-      );
+      Err(e) => eprintln!("Failed to get cache connection: {}", e),
     }
   }
 }
@@ -493,9 +640,16 @@ fn get_song(
         .unwrap_or_else(|_| track.path.clone())
         .to_string_lossy()
         .into_owned();
-      let lyrics = read_track_lyrics(&track.path).unwrap_or_default();
-      let date_added =
-        read_id3v2_user_text(&track.path, "DATE_ADDED").unwrap_or_default();
+      // Lyrics and DATE_ADDED come from the cache, not a fresh file read.
+      let path_str = track.path.to_string_lossy().to_string();
+      let (lyrics, date_added) = match config.pool.get() {
+        Ok(conn) => db::get_track_detail(&conn, &path_str)
+          .ok()
+          .flatten()
+          .map(|(l, d)| (l.unwrap_or_default(), d.unwrap_or_default()))
+          .unwrap_or_default(),
+        Err(_) => (String::new(), String::new()),
+      };
 
       Json(SingleSongResponse {
         data: SingleSong {
@@ -544,33 +698,32 @@ fn get_song_cover(
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| artist.to_string());
 
-  let catalog = config.catalog.read().unwrap();
-  let track = catalog
-    .find_track(&decoded_artist, song)
-    .ok_or_else(|| NotFound("Track not found".to_string()))?;
-
-  let tagged = read_from_path(&track.path)
-    .map_err(|_| NotFound("Cannot read tags".to_string()))?;
-
-  let tag = tagged
-    .primary_tag()
-    .or_else(|| tagged.first_tag())
-    .ok_or_else(|| NotFound("No tags".to_string()))?;
-
-  let picture = tag
-    .pictures()
-    .first()
-    .ok_or_else(|| NotFound("No cover art".to_string()))?;
-
-  let content_type = match picture.mime_type() {
-    Some(MimeType::Png) => ContentType::PNG,
-    Some(MimeType::Bmp) => ContentType::BMP,
-    Some(MimeType::Gif) => ContentType::GIF,
-    Some(MimeType::Tiff) => ContentType::new("image", "tiff"),
-    _ => ContentType::JPEG,
+  let path_str = {
+    let catalog = config.catalog.read().unwrap();
+    let track = catalog
+      .find_track(&decoded_artist, song)
+      .ok_or_else(|| NotFound("Track not found".to_string()))?;
+    track.path.to_string_lossy().to_string()
   };
 
-  Ok((content_type, picture.data().to_vec()))
+  let conn = config
+    .pool
+    .get()
+    .map_err(|_| NotFound("Cache unavailable".to_string()))?;
+  let (has_cover, blob, mime) = db::get_cover(&conn, &path_str)
+    .map_err(|_| NotFound("Cache error".to_string()))?
+    .ok_or_else(|| NotFound("Track not cached".to_string()))?;
+
+  if !has_cover {
+    return Err(NotFound("No cover art".to_string()));
+  }
+  let data = blob.ok_or_else(|| NotFound("No cover art".to_string()))?;
+  let content_type = mime
+    .as_deref()
+    .and_then(ContentType::parse_flexible)
+    .unwrap_or(ContentType::JPEG);
+
+  Ok((content_type, data))
 }
 
 #[get("/artists/<artist>")]
@@ -599,17 +752,48 @@ struct ReloadResponse {
   data: ReloadData,
 }
 
-// Rescan the music directory and replace the in-memory catalog. Used
-// when files have been added/removed/retagged on disk while the server
-// is running, so the UI can pick up changes without a restart.
+// Kick off a background rescan of the music directory and return immediately
+// with the current track count. The scan re-reads only changed files and swaps
+// in the updated catalog when done; clients poll /api/scan-status to learn when
+// it completes. Used when files are added/removed/retagged on disk while the
+// server runs, so the UI can pick up changes without a restart.
 #[post("/reload")]
 fn reload_catalog(config: &State<AppConfig>) -> Json<ReloadResponse> {
-  let new_catalog = build_catalog(&config.music_path);
-  let track_count = new_catalog.tracks.len();
-  *config.catalog.write().unwrap() = new_catalog;
-  println!("Reloaded catalog: {} track(s)", track_count);
+  spawn_scan(
+    config.pool.clone(),
+    config.music_path.clone(),
+    config.catalog.clone(),
+    config.scanning.clone(),
+  );
+  let track_count = config.catalog.read().unwrap().tracks.len();
   Json(ReloadResponse {
     data: ReloadData { track_count },
+  })
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ScanStatusData {
+  scanning: bool,
+  track_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ScanStatusResponse {
+  data: ScanStatusData,
+}
+
+// Report whether a background scan is running and the current catalog size, so
+// the UI can keep the reload button spinning until the scan finishes and then
+// refresh.
+#[get("/scan-status")]
+fn scan_status(config: &State<AppConfig>) -> Json<ScanStatusResponse> {
+  Json(ScanStatusResponse {
+    data: ScanStatusData {
+      scanning: config.scanning.load(Ordering::SeqCst),
+      track_count: config.catalog.read().unwrap().tracks.len(),
+    },
   })
 }
 
@@ -997,6 +1181,16 @@ fn default_playlists_path(music_path: &Path) -> PathBuf {
   }
 }
 
+// Default cache database location: alongside the music directory, like the
+// playlists file, so it isn't tangled up with the audio files. Falls back to
+// "./tunediver-cache.db" if the music path has no parent.
+fn default_cache_db_path(music_path: &Path) -> PathBuf {
+  match music_path.parent() {
+    Some(p) if !p.as_os_str().is_empty() => p.join("tunediver-cache.db"),
+    _ => PathBuf::from("tunediver-cache.db"),
+  }
+}
+
 #[launch]
 fn rocket() -> _ {
   // Read configuration from Rocket.toml
@@ -1006,22 +1200,52 @@ fn rocket() -> _ {
     .unwrap_or_else(|_| String::from("music"));
 
   println!("Starting Tunediver with music path: {}", music_path);
-  let catalog = build_catalog(Path::new(&music_path));
-  println!(
-    "Indexed {} track(s) from tag metadata",
-    catalog.tracks.len()
-  );
+
+  let cache_db_path: PathBuf = figment
+    .extract_inner::<String>("cache_db_path")
+    .map(PathBuf::from)
+    .unwrap_or_else(|_| default_cache_db_path(Path::new(&music_path)));
+  println!("Using cache database: {}", cache_db_path.display());
+  let pool =
+    db::open_pool(&cache_db_path).expect("Failed to open cache database");
+
+  // Serve immediately from whatever is cached; a background scan below
+  // reconciles against the (possibly slow) music folder.
+  let catalog = match pool.get() {
+    Ok(conn) => db::load_catalog(&conn).unwrap_or_else(|e| {
+      eprintln!("Warning: could not load catalog from cache: {}", e);
+      Catalog { tracks: Vec::new() }
+    }),
+    Err(e) => {
+      eprintln!("Warning: cache connection unavailable: {}", e);
+      Catalog { tracks: Vec::new() }
+    }
+  };
+  println!("Loaded {} track(s) from cache", catalog.tracks.len());
 
   let playlists_path: PathBuf = figment
     .extract_inner::<String>("playlists_path")
     .map(PathBuf::from)
     .unwrap_or_else(|_| default_playlists_path(Path::new(&music_path)));
-  println!("Loading playlists from: {}", playlists_path.display());
-  let playlist_store = PlaylistStore::load(playlists_path);
+  let playlist_store = PlaylistStore::load(pool.clone(), &playlists_path);
+
+  let catalog = Arc::new(RwLock::new(catalog));
+  let scanning = Arc::new(AtomicBool::new(false));
+
+  // Reconcile the cache with disk in the background so startup stays fast even
+  // on slow storage.
+  spawn_scan(
+    pool.clone(),
+    PathBuf::from(&music_path),
+    catalog.clone(),
+    scanning.clone(),
+  );
 
   let config = AppConfig {
     music_path: PathBuf::from(&music_path),
-    catalog: RwLock::new(catalog),
+    pool,
+    catalog,
+    scanning,
   };
 
   rocket::build()
@@ -1037,6 +1261,7 @@ fn rocket() -> _ {
         get_song_cover,
         get_music_file,
         reload_catalog,
+        scan_status,
         list_playlists,
         create_playlist,
         get_playlist,

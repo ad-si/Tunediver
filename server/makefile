@@ -24,6 +24,7 @@ build:
 
 .PHONY: format
 format:
+	cargo clippy --fix --allow-dirty
 	cargo fmt
 
 

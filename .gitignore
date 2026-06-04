@@ -1,3 +1,9 @@
 .claude/
 .DS_Store
 target/
+
+# SQLite metadata/cover cache (and WAL sidecars), created at runtime next to
+# the music folder; e.g. repo root when running against ./example_music.
+tunediver-cache.db
+tunediver-cache.db-wal
+tunediver-cache.db-shm
