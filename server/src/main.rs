@@ -1184,14 +1184,21 @@ fn default_playlists_path(music_path: &Path) -> PathBuf {
   }
 }
 
-// Default cache database location: alongside the music directory, like the
-// playlists file, so it isn't tangled up with the audio files. Falls back to
-// "./tunediver-cache.db" if the music path has no parent.
-fn default_cache_db_path(music_path: &Path) -> PathBuf {
-  match music_path.parent() {
-    Some(p) if !p.as_os_str().is_empty() => p.join("tunediver-cache.db"),
-    _ => PathBuf::from("tunediver-cache.db"),
+// Default cache database location: fast local storage, deliberately NOT beside
+// the music directory — the music may live on slow or removable media (a NAS,
+// an SD card, an external/backup drive), and the whole point of the cache is to
+// avoid touching that medium for metadata. The cache also holds playlists
+// (durable user data), so it goes under Application Support rather than a
+// purgeable cache dir. Falls back to the working directory if $HOME is unset.
+// Override with the `cache_db_path` config key / `ROCKET_CACHE_DB_PATH`.
+fn default_cache_db_path() -> PathBuf {
+  if let Some(home) = std::env::var_os("HOME") {
+    let dir = PathBuf::from(home).join("Library/Application Support/Tunediver");
+    if fs::create_dir_all(&dir).is_ok() {
+      return dir.join("tunediver-cache.db");
+    }
   }
+  PathBuf::from("tunediver-cache.db")
 }
 
 #[launch]
@@ -1207,7 +1214,7 @@ fn rocket() -> _ {
   let cache_db_path: PathBuf = figment
     .extract_inner::<String>("cache_db_path")
     .map(PathBuf::from)
-    .unwrap_or_else(|_| default_cache_db_path(Path::new(&music_path)));
+    .unwrap_or_else(|_| default_cache_db_path());
   println!("Using cache database: {}", cache_db_path.display());
   let pool =
     db::open_pool(&cache_db_path).expect("Failed to open cache database");

@@ -43,6 +43,13 @@ const SCHEMA_VERSION: i64 = 1;
 // scan writes. `foreign_keys` is per-connection, so it's set on every checkout
 // via `with_init` — required for the playlist ON DELETE CASCADE to fire.
 pub fn open_pool(db_path: &Path) -> Result<Pool, Box<dyn std::error::Error>> {
+  // Ensure the parent directory exists so a configured path with a missing
+  // directory (e.g. a fresh ~/Library/Application Support/Tunediver) just works.
+  if let Some(parent) = db_path.parent() {
+    if !parent.as_os_str().is_empty() {
+      std::fs::create_dir_all(parent)?;
+    }
+  }
   let manager = SqliteConnectionManager::file(db_path).with_init(|c| {
     c.execute_batch(
       "PRAGMA journal_mode=WAL;\
