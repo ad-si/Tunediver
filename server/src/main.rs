@@ -176,7 +176,10 @@ fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) {
       collect_audio_files(&path, out);
     } else if file_type.is_file() {
       if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        if is_audio_file(name) {
+        // Skip dotfiles: macOS AppleDouble resource forks (`._foo.flac`) on
+        // exFAT/FAT volumes carry audio extensions but aren't real audio, and
+        // hidden files (`.DS_Store`, etc.) aren't music either.
+        if !name.starts_with('.') && is_audio_file(name) {
           out.push(path);
         }
       }
@@ -1277,4 +1280,38 @@ fn rocket() -> _ {
     .register("/", catchers![not_found])
     .manage(config)
     .manage(playlist_store)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn collect_audio_files_skips_dotfiles_and_non_audio() {
+    // Fixture tree: a real track, a macOS AppleDouble resource fork, a hidden
+    // file, a non-audio file, and a real track inside a subdirectory.
+    let dir = std::env::temp_dir().join("tunediver-collect-test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("song.flac"), b"x").unwrap();
+    fs::write(dir.join("._song.flac"), b"x").unwrap(); // AppleDouble junk
+    fs::write(dir.join(".DS_Store"), b"x").unwrap(); // hidden, non-audio
+    fs::write(dir.join("notes.txt"), b"x").unwrap(); // non-audio
+    fs::write(dir.join("sub/track.mp3"), b"x").unwrap();
+    fs::write(dir.join("sub/._track.mp3"), b"x").unwrap(); // AppleDouble junk
+
+    let mut found = Vec::new();
+    collect_audio_files(&dir, &mut found);
+    let mut names: Vec<String> = found
+      .iter()
+      .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    names.sort();
+
+    assert_eq!(
+      names,
+      vec!["song.flac".to_string(), "track.mp3".to_string()]
+    );
+    let _ = fs::remove_dir_all(&dir);
+  }
 }
