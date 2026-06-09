@@ -939,7 +939,7 @@ const printObj = {
             ["button#playSong", "Play"],
             ["button#addSong", "Add"],
             ["button#shareSong", "Share"],
-            ["button#copyFilepath", "Copy Filepath"],
+            ["button#copyFilepath", {title: songData.file_path || ""}, "Copy Filepath"],
             ["img#songCover", {
               "src": coverUrl,
               "alt": "Image of " + (songData.track_artist || ""),
