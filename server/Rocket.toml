@@ -4,6 +4,10 @@ port = 7313
 
 [default]
 music_path = "music"
+# Skip the startup reconcile when the cache was fully scanned within this many
+# seconds (default 86400 = 1 day). 0 forces a scan on every startup. Override
+# per-deployment or via ROCKET_STARTUP_SCAN_MAX_AGE_SECS.
+startup_scan_max_age_secs = 86400
 
 [release]
 music_path = "/var/lib/tunediver/music"

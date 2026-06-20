@@ -264,6 +264,43 @@ fn read_cover(path: &Path) -> (bool, Option<Vec<u8>>, Option<String>) {
   (true, Some(picture.data().to_vec()), Some(mime.to_string()))
 }
 
+// Default max age of a recorded full scan before a startup re-scan is forced.
+// The music is on slow removable storage and changes rarely, so a day bounds
+// staleness while sparing repeated restarts a redundant tree walk. Overridable
+// via the `startup_scan_max_age_secs` config key.
+const DEFAULT_STARTUP_SCAN_MAX_AGE_SECS: i64 = 86_400;
+
+// Current wall-clock time in whole UNIX seconds, 0 if the clock is before the
+// epoch (which can't happen in practice but keeps this total).
+fn now_unix_secs() -> i64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_secs() as i64)
+    .unwrap_or(0)
+}
+
+// Whether to reconcile against disk on startup. The LaunchAgent restarts often
+// (reboot, redeploy, crash) while the music rarely changes, so re-walking tens
+// of thousands of files on every start is wasteful. Scan when the cache is
+// empty (first run), when no full scan was ever recorded, or when the last
+// recorded scan is older than `max_age_secs`. A `max_age_secs <= 0` forces a
+// scan on every startup (the original behavior). Pure for testability; callers
+// supply the cached-track count, the stored timestamp, and the current time.
+fn should_scan_on_startup(
+  cached_tracks: usize,
+  last_scan: Option<i64>,
+  now_secs: i64,
+  max_age_secs: i64,
+) -> bool {
+  if cached_tracks == 0 || max_age_secs <= 0 {
+    return true;
+  }
+  match last_scan {
+    None => true,
+    Some(t) => now_secs.saturating_sub(t) >= max_age_secs,
+  }
+}
+
 // (mtime_secs, size) for change detection. Returns (0, 0) if the file can't
 // be stat'd, which forces a re-read on the next scan.
 fn file_stamp(path: &Path) -> (i64, i64) {
@@ -394,6 +431,15 @@ fn run_scan(
           eprintln!("Scan: failed to remove {}: {}", path_str, e);
         }
       }
+    }
+    // Record a successful full reconcile so a subsequent restart can skip an
+    // immediate re-scan (see should_scan_on_startup). Only a trustworthy walk
+    // resets the freshness clock; a partial scan leaves it stale on purpose so
+    // the next start retries.
+    if let Err(e) =
+      db::set_meta(&conn, "last_scan", &now_unix_secs().to_string())
+    {
+      eprintln!("Scan: failed to record last_scan: {}", e);
     }
   } else if !existing.is_empty() {
     eprintln!(
@@ -1329,7 +1375,8 @@ fn rocket() -> _ {
       Catalog { tracks: Vec::new() }
     }
   };
-  println!("Loaded {} track(s) from cache", catalog.tracks.len());
+  let cached_count = catalog.tracks.len();
+  println!("Loaded {} track(s) from cache", cached_count);
 
   let playlists_path: PathBuf = figment
     .extract_inner::<String>("playlists_path")
@@ -1342,16 +1389,42 @@ fn rocket() -> _ {
   let scan_processed = Arc::new(AtomicUsize::new(0));
   let scan_total = Arc::new(AtomicUsize::new(0));
 
-  // Reconcile the cache with disk in the background so startup stays fast even
-  // on slow storage.
-  spawn_scan(
-    pool.clone(),
-    PathBuf::from(&music_path),
-    catalog.clone(),
-    scanning.clone(),
-    scan_processed.clone(),
-    scan_total.clone(),
-  );
+  // Decide whether the cache is fresh enough to skip the startup reconcile.
+  let startup_scan_max_age_secs: i64 = figment
+    .extract_inner("startup_scan_max_age_secs")
+    .unwrap_or(DEFAULT_STARTUP_SCAN_MAX_AGE_SECS);
+  let last_scan: Option<i64> = pool
+    .get()
+    .ok()
+    .and_then(|conn| db::get_meta(&conn, "last_scan").ok().flatten())
+    .and_then(|s| s.parse().ok());
+
+  if should_scan_on_startup(
+    cached_count,
+    last_scan,
+    now_unix_secs(),
+    startup_scan_max_age_secs,
+  ) {
+    // Reconcile the cache with disk in the background so startup stays fast
+    // even on slow storage.
+    spawn_scan(
+      pool.clone(),
+      PathBuf::from(&music_path),
+      catalog.clone(),
+      scanning.clone(),
+      scan_processed.clone(),
+      scan_total.clone(),
+    );
+  } else {
+    let age = last_scan.map(|t| now_unix_secs().saturating_sub(t));
+    println!(
+      "Skipping startup scan: cache has {} track(s), last scanned {}s ago \
+       (threshold {}s). Use the rescan button or POST /api/reload to force.",
+      cached_count,
+      age.unwrap_or(0),
+      startup_scan_max_age_secs
+    );
+  }
 
   let config = AppConfig {
     music_path: PathBuf::from(&music_path),
@@ -1440,6 +1513,32 @@ mod tests {
     let complete = collect_audio_files(&dir, &mut found);
     assert!(!complete, "an unreadable directory should taint the walk");
     assert!(found.is_empty());
+  }
+
+  #[test]
+  fn startup_scan_decision() {
+    // Empty cache always scans (first run), regardless of timestamp.
+    assert!(should_scan_on_startup(0, Some(1000), 1000, 86_400));
+    // Populated cache, fresh scan within the window -> skip.
+    assert!(!should_scan_on_startup(
+      500,
+      Some(1000),
+      1000 + 3600,
+      86_400
+    ));
+    // Populated cache, last scan older than the window -> scan.
+    assert!(should_scan_on_startup(
+      500,
+      Some(1000),
+      1000 + 90_000,
+      86_400
+    ));
+    // Populated cache but no recorded scan -> scan.
+    assert!(should_scan_on_startup(500, None, 5000, 86_400));
+    // max_age <= 0 forces a scan even with a fresh timestamp.
+    assert!(should_scan_on_startup(500, Some(4999), 5000, 0));
+    // Clock skew (now before last_scan) reads as fresh -> skip.
+    assert!(!should_scan_on_startup(500, Some(9000), 5000, 86_400));
   }
 
   #[test]

@@ -154,6 +154,25 @@ pub fn delete_track(conn: &Conn, path: &str) -> rusqlite::Result<()> {
   Ok(())
 }
 
+// Read a value from the `meta` key-value table, `None` if the key is absent.
+pub fn get_meta(conn: &Conn, key: &str) -> rusqlite::Result<Option<String>> {
+  conn
+    .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+      r.get::<_, String>(0)
+    })
+    .optional()
+}
+
+// Upsert a value into the `meta` key-value table.
+pub fn set_meta(conn: &Conn, key: &str, value: &str) -> rusqlite::Result<()> {
+  conn.execute(
+    "INSERT INTO meta (key, value) VALUES (?1, ?2)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    params![key, value],
+  )?;
+  Ok(())
+}
+
 // Build the in-memory catalog projection. Ordered by path so IDs (the row
 // index) stay deterministic across restarts, matching the previous
 // `build_catalog` behavior.
