@@ -192,19 +192,37 @@ fn read_id3v2_user_text(path: &Path, description: &str) -> Option<String> {
 }
 
 // Recursively collect every audio file under `dir`.
-fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) {
+// Recursively collect audio file paths under `dir`. Returns `false` if any
+// directory or entry could not be read, so the caller can distinguish a
+// complete walk from a partial one. This matters on slow/removable storage
+// (the music lives on a microSD): a transient read failure must not be
+// mistaken for files having been deleted, which would otherwise prune them
+// from the cache.
+fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) -> bool {
   let entries = match fs::read_dir(dir) {
     Ok(e) => e,
-    Err(_) => return,
+    Err(_) => return false,
   };
-  for entry in entries.flatten() {
+  let mut complete = true;
+  for entry in entries {
+    let entry = match entry {
+      Ok(e) => e,
+      Err(_) => {
+        complete = false;
+        continue;
+      }
+    };
     let path = entry.path();
     let file_type = match entry.file_type() {
       Ok(t) => t,
-      Err(_) => continue,
+      Err(_) => {
+        complete = false;
+        continue;
+      }
     };
     if file_type.is_dir() {
-      collect_audio_files(&path, out);
+      // A failed subtree taints the whole walk so pruning stays disabled.
+      complete &= collect_audio_files(&path, out);
     } else if file_type.is_file() {
       if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         // Skip dotfiles: macOS AppleDouble resource forks (`._foo.flac`) on
@@ -216,6 +234,7 @@ fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) {
       }
     }
   }
+  complete
 }
 
 // Extract the first embedded cover picture as (has_cover, bytes, mime). Called
@@ -310,7 +329,7 @@ fn run_scan(
   };
 
   let mut paths = Vec::new();
-  collect_audio_files(music_path, &mut paths);
+  let walk_complete = collect_audio_files(music_path, &mut paths);
   // Sort so the catalog ordering (and thus IDs) is deterministic.
   paths.sort();
   scan_total.store(paths.len(), Ordering::SeqCst);
@@ -360,13 +379,30 @@ fn run_scan(
     changed += 1;
   }
 
-  // Drop rows for files that disappeared from disk.
-  for path_str in existing.keys() {
-    if !seen.contains(path_str) {
-      if let Err(e) = db::delete_track(&conn, path_str) {
-        eprintln!("Scan: failed to remove {}: {}", path_str, e);
+  // Drop rows for files that disappeared from disk — but only when we trust
+  // the walk. A partial walk (transient read failure on the slow/removable
+  // microSD) or an empty result almost always means the volume wasn't fully
+  // readable, not that the user deleted their music. Pruning then would wipe
+  // cached tracks and make them vanish from the UI until a later full scan,
+  // which is exactly the data-loss this guard prevents. New/changed files
+  // found above are still upserted; only the destructive prune is skipped.
+  let trustworthy = walk_complete && !paths.is_empty();
+  if trustworthy {
+    for path_str in existing.keys() {
+      if !seen.contains(path_str) {
+        if let Err(e) = db::delete_track(&conn, path_str) {
+          eprintln!("Scan: failed to remove {}: {}", path_str, e);
+        }
       }
     }
+  } else if !existing.is_empty() {
+    eprintln!(
+      "Scan: walk incomplete (complete={}, {} file(s) found, {} cached); \
+       skipping prune to avoid dropping cached tracks",
+      walk_complete,
+      paths.len(),
+      existing.len()
+    );
   }
 
   match db::load_catalog(&conn) {
@@ -1376,7 +1412,11 @@ mod tests {
     fs::write(dir.join("sub/._track.mp3"), b"x").unwrap(); // AppleDouble junk
 
     let mut found = Vec::new();
-    collect_audio_files(&dir, &mut found);
+    let complete = collect_audio_files(&dir, &mut found);
+    assert!(
+      complete,
+      "a fully readable tree should report a complete walk"
+    );
     let mut names: Vec<String> = found
       .iter()
       .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
@@ -1388,6 +1428,18 @@ mod tests {
       vec!["song.flac".to_string(), "track.mp3".to_string()]
     );
     let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn collect_audio_files_reports_unreadable_dir() {
+    // A directory that can't be read (here: doesn't exist) must report an
+    // incomplete walk so the caller skips pruning the cache.
+    let dir = std::env::temp_dir().join("tunediver-missing-dir-xyz");
+    let _ = fs::remove_dir_all(&dir);
+    let mut found = Vec::new();
+    let complete = collect_audio_files(&dir, &mut found);
+    assert!(!complete, "an unreadable directory should taint the walk");
+    assert!(found.is_empty());
   }
 
   #[test]
