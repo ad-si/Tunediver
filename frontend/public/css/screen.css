@@ -281,36 +281,6 @@ h3 {
   vertical-align: middle;
 }
 
-#queue {
-  z-index: 10;
-  vertical-align: -20%;
-  font-size: 16px;
-  width: 30px;
-  height: 30px;
-  margin: 0 5px 0 30px;
-}
-
-#queue:before {
-  content: "\2630";
-}
-
-#currentQueue {
-  top: 72px;
-  left: 385px;
-  width: 200px;
-  height: 200px;
-}
-
-#currentQueue:before {
-  top: -24px;
-  right: 28px;
-}
-
-#currentQueue:after {
-  top: -20px;
-  right: 30px;
-}
-
 #loud,
 #mute {
   height: 18px;

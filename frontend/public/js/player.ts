@@ -80,14 +80,12 @@ function initPlayer () {
           ]
         ],
         ["span#duration", "- 0:00"],
-        ["button#queue"],
         ["button#shuffle"],
         ["button#repeat"],
         ["button#share"],
         ["button#mute", "-"],
         ["input#volume", {type: "range", min: "0", max: "1", step: "0.01", value: "0.5"}],
         ["button#loud", "+"],
-        ["div#currentQueue.bubble", {style: "display: none"}]
       ]
     )
 
@@ -153,14 +151,6 @@ function initPlayer () {
           // Force an update after seeking completes
           playerUpdater()
         }
-      })
-    }
-
-    const queueEl = document.getElementById("queue")
-    if (queueEl) {
-      queueEl.addEventListener("click", (e: Event) => {
-        showQueue()
-        e.stopPropagation()
       })
     }
 
@@ -327,28 +317,6 @@ function timeElapsed(): string {
   const m = Math.floor(audio.currentTime / 60)
 
   return (s < 10) ? (m + ":0" + s) : (m + ":" + s)
-}
-
-function showQueue(): void {
-  const currentQueueEl = document.getElementById("currentQueue")
-  if (currentQueueEl) {
-    if (currentQueueEl.style.display === "none") {
-      currentQueueEl.style.display = "block"
-    }
-    else {
-      currentQueueEl.style.display = "none"
-    }
-
-    playlist.forEach(function(song) {
-      shaven(
-        [currentQueueEl,
-          ["div#.row",
-            ["a", song.title]
-          ]
-        ]
-      )
-    })
-  }
 }
 
 function mute(): void {
