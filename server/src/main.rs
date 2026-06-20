@@ -73,6 +73,32 @@ fn encode(segment: &str) -> String {
   urlencoding::encode(segment).to_string()
 }
 
+// Tag conventions pack collaborating artists into a single artist string.
+// Split on the recognized separators so each participant surfaces as its
+// own catalog entry and a collaboration appears under every artist
+// involved. An artist string with no separator yields a single-element vec.
+//
+// Separators:
+//   " / "  — surrounding spaces are required and load-bearing: splitting on
+//            a bare "/" would mangle single names like "AC/DC", "D/troit".
+//   ";"    — unambiguous (no artist name contains one); no spaces required.
+fn split_artists(artist: &str) -> Vec<String> {
+  artist
+    .split(" / ")
+    .flat_map(|s| s.split(';'))
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .collect()
+}
+
+// Whether a track's (possibly multi-artist) artist string belongs to
+// `query`. Matches the full string verbatim — so links built from the
+// original credit keep resolving — or any single split-out artist, which
+// is what makes a collaboration reachable from each participant's page.
+fn artist_matches(full: &str, query: &str) -> bool {
+  full == query || split_artists(full).iter().any(|a| a == query)
+}
+
 // Read artist and title from the file's embedded tags. Falls back to
 // "Unknown Artist" / "Unknown Title" when tags are missing or unreadable;
 // never consults the filename or directory name.
@@ -340,7 +366,9 @@ impl Catalog {
   fn list_artists(&self) -> Vec<Artist> {
     let mut names: BTreeSet<String> = BTreeSet::new();
     for track in &self.tracks {
-      names.insert(track.artist.clone());
+      for name in split_artists(&track.artist) {
+        names.insert(name);
+      }
     }
     names
       .into_iter()
@@ -355,7 +383,11 @@ impl Catalog {
 
   // Tracks belonging to `artist`, in catalog order.
   fn tracks_by_artist(&self, artist: &str) -> Vec<&Track> {
-    self.tracks.iter().filter(|t| t.artist == artist).collect()
+    self
+      .tracks
+      .iter()
+      .filter(|t| artist_matches(&t.artist, artist))
+      .collect()
   }
 
   // Find a track by artist + url-encoded title. If multiple tracks share
@@ -365,7 +397,7 @@ impl Catalog {
     self
       .tracks
       .iter()
-      .find(|t| t.artist == artist && t.title == decoded)
+      .find(|t| t.title == decoded && artist_matches(&t.artist, artist))
   }
 }
 
@@ -1320,5 +1352,75 @@ mod tests {
       vec!["song.flac".to_string(), "track.mp3".to_string()]
     );
     let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn split_artists_separates_collaborations() {
+    // " / " (spaced) and ";" split into individual artists.
+    assert_eq!(
+      split_artists("Bobby McFerrin / Chick Corea"),
+      vec!["Bobby McFerrin", "Chick Corea"]
+    );
+    assert_eq!(
+      split_artists("2Pac;K-Ci & JoJo"),
+      vec!["2Pac", "K-Ci & JoJo"]
+    );
+    // A single artist yields one element.
+    assert_eq!(split_artists("Chick Corea"), vec!["Chick Corea"]);
+  }
+
+  #[test]
+  fn split_artists_preserves_names_with_bare_slash() {
+    // Without surrounding spaces a slash is part of the name, not a
+    // separator — band names must stay intact.
+    assert_eq!(split_artists("AC/DC"), vec!["AC/DC"]);
+    assert_eq!(split_artists("Usher/Pitbull"), vec!["Usher/Pitbull"]);
+    assert_eq!(split_artists("fwd/slash"), vec!["fwd/slash"]);
+  }
+
+  #[test]
+  fn artist_matches_full_string_and_each_participant() {
+    let full = "Bobby McFerrin / Chick Corea";
+    assert!(artist_matches(full, full)); // verbatim (link from credit)
+    assert!(artist_matches(full, "Bobby McFerrin")); // participant
+    assert!(artist_matches(full, "Chick Corea")); // participant
+    assert!(!artist_matches(full, "Herbie Hancock"));
+  }
+
+  #[test]
+  fn catalog_unifies_artists_across_collaborations() {
+    let track = |id, artist: &str| Track {
+      id,
+      artist: artist.to_string(),
+      title: format!("Song {}", id),
+      path: PathBuf::from(format!("/{}.mp3", id)),
+    };
+    let catalog = Catalog {
+      tracks: vec![
+        track(0, "Bobby McFerrin / Chick Corea"),
+        track(1, "Chick Corea"),
+        track(2, "Bobby McFerrin"),
+        track(3, "Chick Corea / Bobby McFerrin"),
+      ],
+    };
+
+    // Exactly two artist entries despite four distinct tag strings.
+    let names: Vec<String> =
+      catalog.list_artists().into_iter().map(|a| a.name).collect();
+    assert_eq!(names, vec!["Bobby McFerrin", "Chick Corea"]);
+
+    // Each artist's page gathers every track they appear on.
+    let mcferrin: Vec<usize> = catalog
+      .tracks_by_artist("Bobby McFerrin")
+      .iter()
+      .map(|t| t.id)
+      .collect();
+    assert_eq!(mcferrin, vec![0, 2, 3]);
+
+    // The original collaboration credit still resolves verbatim.
+    assert!(catalog
+      .tracks_by_artist("Chick Corea / Bobby McFerrin")
+      .iter()
+      .any(|t| t.id == 3));
   }
 }
