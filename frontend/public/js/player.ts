@@ -164,6 +164,34 @@ function initPlayer () {
       })
     }
 
+    const shuffleEl = document.getElementById("shuffle")
+    if (shuffleEl) {
+      shuffleEl.addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        shuffleEnabled = !shuffleEnabled
+        shuffleEl.classList.toggle("active", shuffleEnabled)
+        shuffleEl.setAttribute(
+          "title", shuffleEnabled ? "Shuffle: on" : "Shuffle: off"
+        )
+      })
+    }
+
+    const repeatEl = document.getElementById("repeat")
+    if (repeatEl) {
+      repeatEl.addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        // Cycle off → all → one → off.
+        repeatMode = repeatMode === "off"
+          ? "all"
+          : repeatMode === "all" ? "one" : "off"
+        // `.active` lights the icon for both repeat modes; `.one` adds the
+        // "1" badge that distinguishes repeat-one from repeat-all.
+        repeatEl.classList.toggle("active", repeatMode !== "off")
+        repeatEl.classList.toggle("one", repeatMode === "one")
+        repeatEl.setAttribute("title", "Repeat: " + repeatMode)
+      })
+    }
+
     const muteEl = document.getElementById("mute")
     if (muteEl) {
       muteEl.addEventListener("click", () => mute(), false)

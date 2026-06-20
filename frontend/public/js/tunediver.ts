@@ -48,6 +48,26 @@ let currentTab: "artists" | "songs" | "playlists" = "artists"
 // so the play/remove handlers in the playlist's song rows can reference it.
 let currentPlaylistId: string | null = null
 
+// When true, prev/next and auto-advance pick a random track from the active
+// context (playlist, songs list, or current artist) instead of the
+// sequential neighbour. Toggled by the shuffle button in the player.
+let shuffleEnabled: boolean = false
+
+// Repeat behaviour, cycled by the repeat button in the player:
+//   "off" — auto-advance stops at the end of the active list (default)
+//   "all" — prev/next and auto-advance wrap around the ends of the list
+//   "one" — the current track replays when it ends
+// Shuffle already plays endlessly, so "all" vs "off" only differ when
+// shuffle is disabled; "one" overrides both.
+let repeatMode: "off" | "all" | "one" = "off"
+
+// Keys ("artistSlug/songSlug") of the most recently played tracks, oldest
+// first. Shuffle avoids re-picking anything in this window so the same songs
+// don't recur too soon; it's a best-effort filter that's relaxed when the
+// active list is too small to offer fresh tracks.
+const recentlyPlayed: string[] = []
+const RECENT_LIMIT = 10
+
 // Mark the given c1 tab button as active and clear the active state
 // from the others. Pass null to clear all. Drives the colored highlight
 // on whichever tab's view is currently rendered.
@@ -181,8 +201,13 @@ function playSong(
       newAudio.currentTime = 0
       playerUpdater()
       updatePlayingMarkers()
-      // Auto-advance to the next neighbour in the active tab's list.
-      // No-op if nothing is queued after the current song.
+      // Repeat-one replays the current track; otherwise auto-advance to the
+      // next neighbour in the active tab's list (a no-op if nothing follows,
+      // unless repeat-all wraps back to the start).
+      if (repeatMode === "one") {
+        setPlayingState("playing")
+        return
+      }
       playAdjacentSong(1)
     }, false)
 
@@ -196,6 +221,13 @@ function playSong(
     // are applied on the "play" event (or removed on "pause"/"ended"),
     // so pre-loaded tracks that aren't autoplaying stay unmarked.
     currentlyPlaying = { artistSlug: artistName, songSlug: song.slug }
+
+    // Record play history for shuffle's recent-repeat avoidance. Only count
+    // tracks that actually start playing, not ones merely pre-loaded (the
+    // landing-page random preload passes autoplay = false).
+    if (autoplay) {
+      rememberPlayed(songKey(artistName, song.slug))
+    }
 
     // Enable transport buttons now that a song is loaded
     for (const id of ["previous", "play", "next"]) {
@@ -239,6 +271,14 @@ function playSong(
 // if nothing is playing, or if there is no neighbour in that direction.
 function playAdjacentSong(direction: 1 | -1): void {
   if (!currentlyPlaying) return
+
+  // In shuffle mode the direction is irrelevant: prev, next, and
+  // auto-advance all jump to a random track in the active context.
+  if (shuffleEnabled) {
+    playRandomInContext()
+    return
+  }
+
   const { artistSlug, songSlug, playlistId, playlistIndex } = currentlyPlaying
 
   // Playlist context overrides currentTab: even if the user has navigated
@@ -246,7 +286,10 @@ function playAdjacentSong(direction: 1 | -1): void {
   // the playlist that started playback.
   if (playlistId !== undefined && playlistIndex !== undefined) {
     ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
-      const targetIdx = playlistIndex + direction
+      const targetIdx = neighbourIndex(
+        playlistIndex, direction, playlist.tracks.length
+      )
+      if (targetIdx === null) return
       const target = playlist.tracks[targetIdx]
       if (!target || !target.available) return
       playPlaylistTrack(playlist.id, targetIdx, target)
@@ -275,8 +318,9 @@ function playAdjacentSong(direction: 1 | -1): void {
         s.slug === songSlug && (s.artist_slug || "") === artistSlug
       )
       if (idx === -1) return
-      const target = songs[idx + direction]
-      if (!target) return
+      const targetIdx = neighbourIndex(idx, direction, songs.length)
+      if (targetIdx === null) return
+      const target = songs[targetIdx]
       const targetArtistSlug = target.artist_slug || ""
       playSong(target, targetArtistSlug, false)
 
@@ -301,8 +345,129 @@ function playAdjacentSong(direction: 1 | -1): void {
   ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
     const idx = songs.findIndex((s) => s.slug === songSlug)
     if (idx === -1) return
-    const target = songs[idx + direction]
-    if (!target) return
+    const targetIdx = neighbourIndex(idx, direction, songs.length)
+    if (targetIdx === null) return
+    const target = songs[targetIdx]
+    playSong(target, artistSlug, false)
+  })
+}
+
+// Resolve the index of the sequential neighbour of `idx` in a list of
+// `length` items. Returns null when stepping past either end, except in
+// repeat-all mode, where it wraps around to the opposite end.
+function neighbourIndex(
+  idx: number, direction: 1 | -1, length: number
+): number | null {
+  const next = idx + direction
+  if (next >= 0 && next < length) return next
+  if (repeatMode === "all" && length > 0) return (next + length) % length
+  return null
+}
+
+// Stable identity for a track across contexts (artist tab, songs tab,
+// playlists), used to track play history and de-duplicate shuffle picks.
+function songKey(artistSlug: string, songSlug: string): string {
+  return artistSlug + "/" + songSlug
+}
+
+// Record a track as just played, keeping the most recent RECENT_LIMIT keys.
+// Re-playing a track moves it to the front of the window rather than keeping
+// a stale position, so the window always reflects true recency.
+function rememberPlayed(key: string): void {
+  const existing = recentlyPlayed.indexOf(key)
+  if (existing !== -1) recentlyPlayed.splice(existing, 1)
+  recentlyPlayed.push(key)
+  while (recentlyPlayed.length > RECENT_LIMIT) recentlyPlayed.shift()
+}
+
+// Pick a random index into `keys` (one key per candidate track), avoiding any
+// track played recently. When every candidate is in the recent window (the
+// list is smaller than the window), fall back to the full list but still
+// avoid an immediate repeat of `currentKey` when there's an alternative.
+function randomFreshIndex(keys: string[], currentKey: string): number {
+  const recent = new Set(recentlyPlayed)
+  const fresh: number[] = []
+  for (let i = 0; i < keys.length; i++) {
+    if (!recent.has(keys[i])) fresh.push(i)
+  }
+  let pool = fresh
+  if (!pool.length) {
+    pool = []
+    for (let i = 0; i < keys.length; i++) {
+      if (keys.length === 1 || keys[i] !== currentKey) pool.push(i)
+    }
+  }
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
+// Play a random track from whatever context is currently driving playback,
+// mirroring the per-context highlight/URL bookkeeping of playAdjacentSong.
+// Used by prev/next and auto-advance while shuffle is enabled.
+function playRandomInContext(): void {
+  if (!currentlyPlaying) return
+  const { artistSlug, songSlug, playlistId, playlistIndex } = currentlyPlaying
+
+  if (playlistId !== undefined && playlistIndex !== undefined) {
+    ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
+      const playable = playlist.tracks
+        .map((track, index) => ({ track, index }))
+        .filter((entry) => entry.track.available)
+      if (!playable.length) return
+      const keys = playable.map((e) =>
+        songKey(e.track.artist_slug, e.track.slug)
+      )
+      const pick = playable[
+        randomFreshIndex(keys, songKey(artistSlug, songSlug))
+      ]
+      playPlaylistTrack(playlist.id, pick.index, pick.track)
+
+      if (currentPlaylistId === playlist.id) {
+        const row = $("c3").querySelector(
+          `.row[data-playlist-index="${pick.index}"]`
+        ) as HTMLElement | null
+        if (row) {
+          highlight(row)
+          row.scrollIntoView({ block: "nearest" })
+        }
+      }
+      printObj.song(pick.track.slug, pick.track.artist_slug)
+      const url = `playlists/${playlist.id}/${pick.index}`
+      history.pushState({ "url": url }, pick.track.slug, baseURL + "/" + url)
+    })
+    return
+  }
+
+  if (currentTab === "songs") {
+    ajax<Song[]>("/songs", (songs) => {
+      if (!songs.length) return
+      const keys = songs.map((s) => songKey(s.artist_slug || "", s.slug))
+      const target = songs[
+        randomFreshIndex(keys, songKey(artistSlug, songSlug))
+      ]
+      const targetArtistSlug = target.artist_slug || ""
+      playSong(target, targetArtistSlug, false)
+
+      const newRow = $("c2").querySelector(
+        `.row[data-artist-slug="${CSS.escape(targetArtistSlug)}"]`
+        + `[data-song-slug="${CSS.escape(target.slug)}"]`
+      ) as HTMLElement | null
+      if (newRow) {
+        highlight(newRow)
+        newRow.scrollIntoView({ block: "nearest" })
+      }
+      printObj.song(target.slug, targetArtistSlug)
+      const url = targetArtistSlug + "/" + target.slug
+      history.pushState({"url": url}, target.slug, baseURL + "/" + url)
+    })
+    return
+  }
+
+  ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
+    if (!songs.length) return
+    const keys = songs.map((s) => songKey(artistSlug, s.slug))
+    const target = songs[
+      randomFreshIndex(keys, songKey(artistSlug, songSlug))
+    ]
     playSong(target, artistSlug, false)
   })
 }

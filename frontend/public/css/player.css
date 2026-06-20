@@ -229,6 +229,9 @@
 #mute {
   margin-left: 30px;
 }
+#repeat {
+  position: relative;
+}
 #repeat:before {
   content: '\21BA';
   font-size: 20px;
@@ -236,12 +239,31 @@
   margin-left: 20px;
   vertical-align: middle;
 }
+/* Lit up while repeat is active (either "all" or "one"); see #shuffle.active */
+#repeat.active {
+  color: var(--accent);
+}
+/* Badge distinguishing repeat-one from repeat-all */
+#repeat.one:after {
+  content: '1';
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  font-size: 10px;
+  font-weight: 900;
+}
 #shuffle:before {
   content: '\21C4';
   font-size: 20px;
   font-weight: 900;
   margin-left: 20px;
   vertical-align: middle;
+}
+/* Lit up while shuffle mode is active. Uses --accent (the per-theme
+   interactive accent, same as nav button hover) for contrast against the
+   nav background in both light and dark mode. */
+#shuffle.active {
+  color: var(--accent);
 }
 #share:before {
   content: '\2709';
