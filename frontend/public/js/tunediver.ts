@@ -229,9 +229,25 @@ function playSong(
       playpause()
     }
     // Player info is Artist - Title, both taken from the audio file's
-    // embedded tags (track_artist / title). Use textContent so tag values
-    // that happen to contain HTML-special characters are rendered as text.
-    $("playerInfo").textContent = (song.track_artist || "") + " - " + song.title
+    // embedded tags (track_artist / title). The artist name is a link to the
+    // artist's page; clicking elsewhere on the info (the title) still opens
+    // the song detail via the #playerInfo handler. Build with textContent so
+    // tag values containing HTML-special characters render as text.
+    const playerInfoEl = $("playerInfo")
+    playerInfoEl.innerHTML = ""
+    const artistLink = document.createElement("a")
+    artistLink.className = "playerArtist"
+    artistLink.textContent = song.track_artist || ""
+    artistLink.addEventListener("click", (e: Event) => {
+      e.preventDefault()
+      e.stopPropagation()
+      history.pushState(
+        { "url": artistName }, artistName, baseURL + "/" + artistName
+      )
+      route(artistName)
+    })
+    playerInfoEl.appendChild(artistLink)
+    playerInfoEl.appendChild(document.createTextNode(" - " + song.title))
 
     // Populating MediaSession metadata is what makes macOS route the
     // next/previous media keys to this tab. Without it, only play/pause

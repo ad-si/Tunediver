@@ -220,7 +220,7 @@ function initPlayer () {
       shareEl.addEventListener("click", () => {
         const playerInfoEl = document.getElementById("playerInfo")
         if (playerInfoEl) {
-          alert(baseURL + playerInfoEl.innerHTML)
+          alert(baseURL + playerInfoEl.textContent)
         }
       })
     }

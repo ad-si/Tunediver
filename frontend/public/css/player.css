@@ -125,6 +125,14 @@
   text-overflow: ellipsis;
   max-width: 100%;
 }
+#playerInfo .playerArtist {
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+#playerInfo .playerArtist:hover {
+  text-decoration: underline;
+}
 #progressInput {
   width: 100%;
   min-width: 0;
