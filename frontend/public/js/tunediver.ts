@@ -1375,11 +1375,15 @@ function viewController(): Record<string, Function> {
       $("artists").addEventListener("click", () => {
         ;($("search") as HTMLInputElement).value = ""
         printObj.artists()
+        history.pushState(
+          { "url": "artists" }, "Artists", baseURL + "/artists"
+        )
       })
 
       $("songs").addEventListener("click", () => {
         ;($("search") as HTMLInputElement).value = ""
         printObj.allSongs()
+        history.pushState({ "url": "songs" }, "Songs", baseURL + "/songs")
       })
 
       $("playlists").addEventListener("click", () => {
@@ -1415,6 +1419,10 @@ function viewController(): Record<string, Function> {
 
     artists(): void {
       printObj.artists()
+    },
+
+    songs(): void {
+      printObj.allSongs()
     },
 
     song(dirs: string[] | [string, string]): void {
@@ -1490,6 +1498,12 @@ function route(state: string | { url?: string }): void {
       }
       return
     }
+
+    // The Artists and Songs tab URLs must be matched before the generic
+    // single-segment branch below, which would otherwise treat "artists" /
+    // "songs" as an artist slug.
+    if (dirs.length === 1 && dirs[0] === "artists") { view.artists(); return }
+    if (dirs.length === 1 && dirs[0] === "songs") { view.songs(); return }
 
     if (dirs.length === 1 && dirs[0] !== "") view.artist(dirs[0])
       else if (dirs.length === 2) view.song(dirs)
