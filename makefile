@@ -40,12 +40,11 @@ website-serve:
 	cd website && python3 -m http.server 8080
 
 
-.PHONY: restart
-restart:
-	cargo install --path ./server --force
-	launchctl kickstart -k gui/$(shell id -u)/com.tunediver.server
-
-
 .PHONY: install
 install:
 	cargo install --path ./server
+
+
+.PHONY: restart
+restart: install
+	launchctl kickstart -k gui/$(shell id -u)/com.tunediver.server
