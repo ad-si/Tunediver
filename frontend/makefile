@@ -5,6 +5,7 @@ help: makefile
 
 .PHONY: test
 test:
+	@test -d node_modules || npm install
 	npx tsc --noEmit
 
 
