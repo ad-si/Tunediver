@@ -241,10 +241,9 @@ function playSong(
     artistLink.addEventListener("click", (e: Event) => {
       e.preventDefault()
       e.stopPropagation()
-      history.pushState(
-        { "url": artistName }, artistName, baseURL + "/" + artistName
-      )
-      route(artistName)
+      const url = artistPath(artistName)
+      history.pushState({ "url": url }, artistName, baseURL + "/" + url)
+      route(url)
     })
     playerInfoEl.appendChild(artistLink)
     playerInfoEl.appendChild(document.createTextNode(" - " + song.title))
@@ -261,7 +260,7 @@ function playSong(
 
     // Update URL only if explicitly requested
     if (updateUrl && song.slug) {
-      const url = artistName + "/" + song.slug
+      const url = songPath(artistName, song.slug)
       history.pushState({"url": url}, song.title, baseURL + "/" + url)
     }
   } catch (e) {
@@ -341,7 +340,7 @@ function playAdjacentSong(direction: 1 | -1): void {
         newRow.scrollIntoView({ block: "nearest" })
       }
       printObj.song(target.slug, targetArtistSlug)
-      const url = targetArtistSlug + "/" + target.slug
+      const url = songPath(targetArtistSlug, target.slug)
       history.pushState({"url": url}, target.slug, baseURL + "/" + url)
     })
     return
@@ -373,6 +372,17 @@ function neighbourIndex(
 // playlists), used to track play history and de-duplicate shuffle picks.
 function songKey(artistSlug: string, songSlug: string): string {
   return artistSlug + "/" + songSlug
+}
+
+// Client-side route paths (without baseURL or a leading slash) — the value
+// stored in history state and passed to route(). Artist and song views live
+// under /artists so they never collide with the root-level static-asset and
+// audio-streaming routes the server serves at the path root.
+function artistPath(artistSlug: string): string {
+  return "artists/" + artistSlug
+}
+function songPath(artistSlug: string, songSlug: string): string {
+  return "artists/" + artistSlug + "/songs/" + songSlug
 }
 
 // Record a track as just played, keeping the most recent RECENT_LIMIT keys.
@@ -461,7 +471,7 @@ function playRandomInContext(): void {
         newRow.scrollIntoView({ block: "nearest" })
       }
       printObj.song(target.slug, targetArtistSlug)
-      const url = targetArtistSlug + "/" + target.slug
+      const url = songPath(targetArtistSlug, target.slug)
       history.pushState({"url": url}, target.slug, baseURL + "/" + url)
     })
     return
@@ -1039,7 +1049,8 @@ const printObj = {
           printObj.songs(artist.slug)
           printObj.artist(artist.slug)
 
-          history.pushState({"url": artist.slug}, artist.slug, baseURL + "/" + artist.slug)
+          const url = artistPath(artist.slug)
+          history.pushState({"url": url}, artist.slug, baseURL + "/" + url)
         })
 
         link.addEventListener("dblclick", (e: Event) => {
@@ -1187,7 +1198,7 @@ const printObj = {
               printObj.song(song.slug, artist)
 
               // Save in history object
-              const url = artist + "/" + song.slug
+              const url = songPath(artist, song.slug)
               history.pushState({"url": url}, song.slug, baseURL + "/" + url)
             }
           }
@@ -1229,7 +1240,7 @@ const printObj = {
               ["h2#heading", songData.title],
               ["p#trackArtist",
                 ["a#trackArtistLink",
-                  { "href": baseURL + "/" + artistSlug },
+                  { "href": baseURL + "/" + artistPath(artistSlug) },
                   songData.track_artist || ""],
               ],
               ["p#dateAdded",
@@ -1266,10 +1277,9 @@ const printObj = {
         if (target.id === "trackArtistLink") {
           e.preventDefault()
           e.stopPropagation()
-          history.pushState(
-            { "url": artistSlug }, artistSlug, baseURL + "/" + artistSlug
-          )
-          route(artistSlug)
+          const url = artistPath(artistSlug)
+          history.pushState({ "url": url }, artistSlug, baseURL + "/" + url)
+          route(url)
           return false
         }
 
@@ -1413,7 +1423,7 @@ const printObj = {
           if (songId && songRegistry[songId]) {
             const { song, artist } = songRegistry[songId]
             printObj.song(song.slug, artist)
-            const url = artist + "/" + song.slug
+            const url = songPath(artist, song.slug)
             history.pushState({"url": url}, song.slug, baseURL + "/" + url)
           }
         }
@@ -1775,10 +1785,10 @@ function viewController(): Record<string, Function> {
       printObj.allSongs()
     },
 
-    song(dirs: string[] | [string, string]): void {
+    song(artistSlug: string, songSlug: string): void {
       printObj.artists()
-      printObj.songs(dirs[0])
-      printObj.song(dirs[1], dirs[0])
+      printObj.songs(artistSlug)
+      printObj.song(songSlug, artistSlug)
     },
 
     playlists(): void {
@@ -1849,19 +1859,28 @@ function route(state: string | { url?: string }): void {
       return
     }
 
-    // The Artists and Songs tab URLs must be matched before the generic
-    // single-segment branch below, which would otherwise treat "artists" /
-    // "songs" as an artist slug.
-    if (dirs.length === 1 && dirs[0] === "artists") { view.artists(); return }
+    // Artist and song views live under /artists:
+    //   /artists                       → artists tab
+    //   /artists/<artist>              → one artist's page
+    //   /artists/<artist>/songs/<song> → a song's detail view
+    if (dirs[0] === "artists") {
+      if (dirs.length === 1) view.artists()
+      else if (dirs.length === 2) view.artist(dirs[1])
+      else if (dirs.length === 4 && dirs[2] === "songs") view.song(dirs[1], dirs[3])
+      else {
+        alert("This website is not available")
+        throw new Error("Can not route the URL " + url)
+      }
+      return
+    }
+
     if (dirs.length === 1 && dirs[0] === "songs") { view.songs(); return }
 
-    if (dirs.length === 1 && dirs[0] !== "") view.artist(dirs[0])
-      else if (dirs.length === 2) view.song(dirs)
-      else if (url === "") {
+    if (url === "") {
       printObj.artists()
       printObj.startpage()
     }
-    else if (url !== "") {
+    else {
       alert("This website is not available")
       throw new Error("Can not route the URL " + url)
     }
