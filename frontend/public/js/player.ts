@@ -83,9 +83,9 @@ function initPlayer () {
         ["button#shuffle"],
         ["button#repeat"],
         ["button#share"],
-        ["button#mute", "-"],
+        ["button#mute"],
         ["input#volume", {type: "range", min: "0", max: "1", step: "0.01", value: "0.5"}],
-        ["button#loud", "+"],
+        ["button#loud"]
       ]
     )
 
