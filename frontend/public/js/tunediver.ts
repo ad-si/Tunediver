@@ -524,14 +524,119 @@ interface ScanStatus {
   total: number
 }
 
-// Rescan the music folder on the server, then re-render whatever view is
-// currently showing so newly added (or removed) tracks appear. The currently
-// playing audio is left untouched.
-//
-// The server scans in the background and the POST returns immediately, so we
-// poll /scan-status to drive the progress bar in the settings modal and only
-// re-render once the scan has finished (so the refreshed view reflects the new
-// catalog).
+// Whether the previous poll observed a scan in progress, so we can detect the
+// transition to "finished" and re-render the catalog exactly once.
+let scanWasActive = false
+// Active polling timer handle, so overlapping starts don't stack loops.
+let scanPollTimer: number | null = null
+
+// Human-readable progress string shared by the global banner and the settings
+// modal label. total is 0 until the server finishes collecting paths, so fall
+// back to an indeterminate message until a percentage is known.
+function scanProgressText(status: ScanStatus): string {
+  if (status.total > 0) {
+    const pct = Math.min(
+      100, Math.round((status.processed / status.total) * 100)
+    )
+    return `Scanning ${status.processed} / ${status.total} files (${pct}%)`
+  }
+  return "Scanning library…"
+}
+
+// Reflect an in-progress scan in both the always-visible nav banner and the
+// settings-modal progress bar. Called on every poll while scanning.
+function renderScanUI(status: ScanStatus): void {
+  const wrapper = document.getElementById("wrapper")
+  const bannerLabel = document.getElementById("scanBannerLabel")
+  const progress = document.getElementById("scanProgress")
+  const bar = document.getElementById("scanProgressBar")
+  const label = document.getElementById("scanProgressLabel")
+  const button = document.getElementById("reload") as HTMLButtonElement | null
+
+  const text = scanProgressText(status)
+
+  if (wrapper) wrapper.classList.add("scanning")
+  if (bannerLabel) bannerLabel.textContent = text
+
+  if (progress) progress.style.display = "block"
+  if (status.total > 0) {
+    const pct = Math.min(
+      100, Math.round((status.processed / status.total) * 100)
+    )
+    if (bar) {
+      bar.classList.remove("indeterminate")
+      bar.style.width = pct + "%"
+    }
+  } else if (bar) {
+    bar.classList.add("indeterminate")
+  }
+  if (label) label.textContent = text
+  if (button) {
+    button.classList.add("spinning")
+    button.disabled = true
+  }
+}
+
+// Tear down the scan UI once a scan finishes: hide the banner, complete the
+// bar, then re-render the current view against the refreshed catalog. The
+// currently playing audio is left untouched.
+function finishScanUI(): void {
+  const wrapper = document.getElementById("wrapper")
+  const progress = document.getElementById("scanProgress")
+  const bar = document.getElementById("scanProgressBar")
+  const label = document.getElementById("scanProgressLabel")
+  const button = document.getElementById("reload") as HTMLButtonElement | null
+
+  if (wrapper) wrapper.classList.remove("scanning")
+  if (button) {
+    button.classList.remove("spinning")
+    button.disabled = false
+  }
+  if (bar) {
+    bar.classList.remove("indeterminate")
+    bar.style.width = "100%"
+  }
+  if (label) label.textContent = "Scan complete"
+  // Leave the completed bar visible briefly, then hide it and re-render the
+  // current view against the refreshed catalog.
+  window.setTimeout(() => {
+    if (progress) progress.style.display = "none"
+    if (label) label.textContent = ""
+    const path = location.pathname.slice(
+      baseURL.length + 1, location.pathname.length
+    )
+    route(path)
+  }, 600)
+}
+
+// Poll /scan-status and schedule the next poll. A scan can be started by this
+// client (the rescan button), by the server on startup, or by a LaunchAgent
+// restart, so we poll continuously: quickly while a scan runs (to animate the
+// bar), slowly when idle (to notice a scan that began elsewhere). Started once
+// from framework() and self-perpetuating thereafter.
+function pollScanStatus(): void {
+  if (scanPollTimer !== null) {
+    window.clearTimeout(scanPollTimer)
+    scanPollTimer = null
+  }
+  ajax<ScanStatus>("/scan-status", (status) => {
+    if (status.scanning) {
+      renderScanUI(status)
+      scanWasActive = true
+      scanPollTimer = window.setTimeout(pollScanStatus, 500)
+    } else {
+      if (scanWasActive) {
+        scanWasActive = false
+        finishScanUI()
+      }
+      scanPollTimer = window.setTimeout(pollScanStatus, 10000)
+    }
+  })
+}
+
+// Trigger a rescan from the settings modal. The server scans in the background
+// and the POST returns immediately, so we hand off to the shared poller to
+// drive the banner / progress bar and re-render once the scan completes.
 function reloadCatalog(): void {
   const button = document.getElementById("reload") as HTMLButtonElement | null
   const progress = document.getElementById("scanProgress")
@@ -546,67 +651,16 @@ function reloadCatalog(): void {
   if (bar) bar.style.width = "0%"
   if (label) label.textContent = "Starting scan…"
 
-  const renderProgress = (status: ScanStatus): void => {
-    // total is 0 until the server finishes collecting paths; show an
-    // indeterminate message until then, a percentage once it's known.
-    if (status.total > 0) {
-      const pct = Math.min(
-        100, Math.round((status.processed / status.total) * 100)
-      )
-      if (bar) {
-        bar.classList.remove("indeterminate")
-        bar.style.width = pct + "%"
-      }
-      if (label) {
-        label.textContent =
-          `Scanning ${status.processed} / ${status.total} files (${pct}%)`
-      }
-    } else {
-      if (bar) bar.classList.add("indeterminate")
-      if (label) label.textContent = "Scanning…"
-    }
-  }
-
-  const finish = (): void => {
-    if (button) {
-      button.classList.remove("spinning")
-      button.disabled = false
-    }
-    if (bar) {
-      bar.classList.remove("indeterminate")
-      bar.style.width = "100%"
-    }
-    if (label) label.textContent = "Scan complete"
-    // Leave the completed bar visible briefly, then hide it and re-render the
-    // current view against the refreshed catalog.
-    window.setTimeout(() => {
-      if (progress) progress.style.display = "none"
-      const path = location.pathname.slice(
-        baseURL.length + 1, location.pathname.length
-      )
-      route(path)
-    }, 600)
-  }
-
-  const poll = (): void => {
-    ajax<ScanStatus>(
-      "/scan-status",
-      (status) => {
-        renderProgress(status)
-        if (status.scanning) {
-          window.setTimeout(poll, 500)
-        } else {
-          finish()
-        }
-      }
-    )
-  }
-
   ajaxMutate<{ track_count: number }>(
     "POST",
     "/reload",
     null,
-    () => poll(),
+    () => {
+      // Mark active up front so the first poll re-renders on completion even
+      // if the scan finishes between this POST and the next status check.
+      scanWasActive = true
+      pollScanStatus()
+    },
     (status) => {
       if (button) {
         button.classList.remove("spinning")
@@ -1558,6 +1612,10 @@ function viewController(): Record<string, Function> {
               ["div#controls"],
               ["button#settings", { "title": "Settings" }]
             ],
+            ["div#scanBanner", { "role": "status", "aria-live": "polite" },
+              ["span#scanBannerDot"],
+              ["span#scanBannerLabel", "Scanning library…"]
+            ],
             ["div#c1",
               ["input#search", {type: "search", placeholder: "search"}],
               ["button#artists", "Artists"],
@@ -1675,6 +1733,10 @@ function viewController(): Record<string, Function> {
           closeSettings()
         }
       })
+
+      // Start watching for scans (one may already be running on startup, e.g.
+      // after a LaunchAgent restart). Self-perpetuating from here on.
+      pollScanStatus()
     },
 
     index(): void {

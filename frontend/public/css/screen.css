@@ -136,6 +136,45 @@ h3 {
   grid-template-columns: 160px fit-content(300px) fit-content(300px) minmax(300px, 1fr);
 }
 
+/* Always-visible warning shown while the server is (re)scanning the music
+   folder: tracks it hasn't re-indexed yet are temporarily absent from the
+   catalog, so the banner explains why something may have "disappeared". It is
+   its own full-width grid row inserted between the nav and the columns; only
+   present in the layout while #wrapper carries the .scanning class. */
+#scanBanner {
+  grid-column: 1 / -1;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border-nav-bottom);
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+#wrapper.scanning {
+  grid-template-rows: auto auto 1fr;
+}
+
+#wrapper.scanning #scanBanner {
+  display: flex;
+}
+
+#scanBannerDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: scan-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes scan-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
 #nav {
   grid-column: 1 / -1;
   width: 100%;
