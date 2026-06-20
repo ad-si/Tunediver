@@ -30,6 +30,12 @@ build:
 	cargo build
 
 
+.PHONY: clean
+clean:
+	cargo clean
+	rm -f $(DEV_CACHE_DB) $(DEV_CACHE_DB)-wal $(DEV_CACHE_DB)-shm
+
+
 .PHONY: format
 format:
 	cargo clippy --fix --allow-dirty

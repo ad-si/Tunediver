@@ -11,3 +11,8 @@ test:
 .PHONY: build
 build:
 	@echo "desktop build not yet integrated"
+
+
+.PHONY: clean
+clean:
+	@echo "desktop clean not yet integrated"

@@ -17,6 +17,13 @@ test:
 	cd server && make test
 
 
+.PHONY: clean
+clean:
+	cd desktop && make clean
+	cd frontend && make clean
+	cd server && make clean
+
+
 .PHONY: format
 format:
 	cd server && make format
