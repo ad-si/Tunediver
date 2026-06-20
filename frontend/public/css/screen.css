@@ -24,6 +24,7 @@
 
   /* Accents */
   --accent: #28b4dc;
+  --accent-hover: #5fcdee;
   --accent-active: #2090b0;
   --accent-soft: rgba(40, 180, 220, 0.2);
 
@@ -71,6 +72,7 @@
     --border-songs-link: #c8c8c8;
 
     --accent: #1e8fb4;
+    --accent-hover: #28b4dc;
     --accent-active: #14788c;
     --accent-soft: rgba(40, 180, 220, 0.22);
 
@@ -155,8 +157,18 @@ h3 {
   text-shadow: var(--text-shadow);
 }
 
+/* Brighten to the strong text colour on hover so the transient hover state
+   stays distinct from the persistent accent-coloured "on" state used by
+   #shuffle.active / #repeat.active (and from the darker press state below). */
 #nav button:hover {
-  color: var(--accent);
+  color: var(--text-strong);
+}
+
+/* An already-"on" button (shuffle/repeat) hovers to a brighter accent instead,
+   so it keeps its accent identity yet still reads differently from both its
+   resting on-state and an inactive button's hover. */
+#nav button.active:hover {
+  color: var(--accent-hover);
 }
 
 #nav button:active {
