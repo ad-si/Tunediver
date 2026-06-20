@@ -8,7 +8,7 @@ use rocket::State;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -53,6 +53,11 @@ struct AppConfig {
   // True while a background scan runs; gates /api/scan-status and prevents
   // overlapping scans.
   scanning: Arc<AtomicBool>,
+  // Progress of the current/last scan: number of files examined and the total
+  // discovered on disk. Surfaced via /api/scan-status so the UI can render a
+  // determinate progress bar instead of an indefinite spinner.
+  scan_processed: Arc<AtomicUsize>,
+  scan_total: Arc<AtomicUsize>,
 }
 
 // Helper function to check if a file is an audio file. Includes a few
@@ -264,6 +269,8 @@ fn spawn_scan(
   music_path: PathBuf,
   catalog: Arc<RwLock<Catalog>>,
   scanning: Arc<AtomicBool>,
+  scan_processed: Arc<AtomicUsize>,
+  scan_total: Arc<AtomicUsize>,
 ) {
   if scanning
     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -272,8 +279,12 @@ fn spawn_scan(
     println!("Scan already in progress; ignoring request");
     return;
   }
+  // Reset progress so a poll landing between flag-set and path-collection
+  // doesn't report stale totals from the previous scan.
+  scan_processed.store(0, Ordering::SeqCst);
+  scan_total.store(0, Ordering::SeqCst);
   std::thread::spawn(move || {
-    run_scan(&pool, &music_path, &catalog);
+    run_scan(&pool, &music_path, &catalog, &scan_processed, &scan_total);
     scanning.store(false, Ordering::SeqCst);
   });
 }
@@ -283,7 +294,13 @@ fn spawn_scan(
 // changed by mtime/size; rows for vanished files are deleted. Paths and
 // filenames only *locate* files on disk; all user-visible metadata comes from
 // the tags.
-fn run_scan(pool: &db::Pool, music_path: &Path, catalog: &RwLock<Catalog>) {
+fn run_scan(
+  pool: &db::Pool,
+  music_path: &Path,
+  catalog: &RwLock<Catalog>,
+  scan_processed: &AtomicUsize,
+  scan_total: &AtomicUsize,
+) {
   let conn = match pool.get() {
     Ok(c) => c,
     Err(e) => {
@@ -296,6 +313,8 @@ fn run_scan(pool: &db::Pool, music_path: &Path, catalog: &RwLock<Catalog>) {
   collect_audio_files(music_path, &mut paths);
   // Sort so the catalog ordering (and thus IDs) is deterministic.
   paths.sort();
+  scan_total.store(paths.len(), Ordering::SeqCst);
+  scan_processed.store(0, Ordering::SeqCst);
 
   let existing = db::load_track_stamps(&conn).unwrap_or_else(|e| {
     eprintln!("Scan: could not read cached stamps: {}", e);
@@ -305,6 +324,9 @@ fn run_scan(pool: &db::Pool, music_path: &Path, catalog: &RwLock<Catalog>) {
   let mut seen: HashSet<String> = HashSet::with_capacity(paths.len());
   let mut changed = 0usize;
   for path in &paths {
+    // Count every file examined (skipped or re-read) so the bar tracks how
+    // far through the folder the scan is, not just how many files changed.
+    scan_processed.fetch_add(1, Ordering::SeqCst);
     let path_str = path.to_string_lossy().to_string();
     let (mtime, size) = file_stamp(path);
     seen.insert(path_str.clone());
@@ -799,6 +821,8 @@ fn reload_catalog(config: &State<AppConfig>) -> Json<ReloadResponse> {
     config.music_path.clone(),
     config.catalog.clone(),
     config.scanning.clone(),
+    config.scan_processed.clone(),
+    config.scan_total.clone(),
   );
   let track_count = config.catalog.read().unwrap().tracks.len();
   Json(ReloadResponse {
@@ -811,6 +835,10 @@ fn reload_catalog(config: &State<AppConfig>) -> Json<ReloadResponse> {
 struct ScanStatusData {
   scanning: bool,
   track_count: usize,
+  // Files examined so far and the total discovered this scan. Both 0 before
+  // path collection finishes; `processed == total` once the scan completes.
+  processed: usize,
+  total: usize,
 }
 
 #[derive(Serialize)]
@@ -828,6 +856,8 @@ fn scan_status(config: &State<AppConfig>) -> Json<ScanStatusResponse> {
     data: ScanStatusData {
       scanning: config.scanning.load(Ordering::SeqCst),
       track_count: config.catalog.read().unwrap().tracks.len(),
+      processed: config.scan_processed.load(Ordering::SeqCst),
+      total: config.scan_total.load(Ordering::SeqCst),
     },
   })
 }
@@ -1273,6 +1303,8 @@ fn rocket() -> _ {
 
   let catalog = Arc::new(RwLock::new(catalog));
   let scanning = Arc::new(AtomicBool::new(false));
+  let scan_processed = Arc::new(AtomicUsize::new(0));
+  let scan_total = Arc::new(AtomicUsize::new(0));
 
   // Reconcile the cache with disk in the background so startup stays fast even
   // on slow storage.
@@ -1281,6 +1313,8 @@ fn rocket() -> _ {
     PathBuf::from(&music_path),
     catalog.clone(),
     scanning.clone(),
+    scan_processed.clone(),
+    scan_total.clone(),
   );
 
   let config = AppConfig {
@@ -1288,6 +1322,8 @@ fn rocket() -> _ {
     pool,
     catalog,
     scanning,
+    scan_processed,
+    scan_total,
   };
 
   rocket::build()

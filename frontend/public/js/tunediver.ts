@@ -145,17 +145,6 @@ function filterRows(query: string): void {
   }
 }
 
-// Utility functions
-function toggle(id: string): void {
-  const element = $(id)
-  if (element.style.display === "none") {
-    element.style.display = "block"
-  }
-  else {
-    element.style.display = "none"
-  }
-}
-
 // Helper function to play a song - centralized to improve reliability
 function playSong(
   song: Song,
@@ -512,33 +501,86 @@ function playPlaylistTrack(
   }
 }
 
+interface ScanStatus {
+  scanning: boolean
+  track_count: number
+  processed: number
+  total: number
+}
+
 // Rescan the music folder on the server, then re-render whatever view is
 // currently showing so newly added (or removed) tracks appear. The currently
 // playing audio is left untouched.
 //
-// The server scans in the background and the POST returns immediately, so the
-// button keeps spinning while we poll /scan-status, and we re-render only once
-// the scan has finished (so the refreshed view reflects the new catalog).
+// The server scans in the background and the POST returns immediately, so we
+// poll /scan-status to drive the progress bar in the settings modal and only
+// re-render once the scan has finished (so the refreshed view reflects the new
+// catalog).
 function reloadCatalog(): void {
-  const button = document.getElementById("reload")
-  if (button) button.classList.add("spinning")
+  const button = document.getElementById("reload") as HTMLButtonElement | null
+  const progress = document.getElementById("scanProgress")
+  const bar = document.getElementById("scanProgressBar")
+  const label = document.getElementById("scanProgressLabel")
 
-  const stopAndRender = (): void => {
-    if (button) button.classList.remove("spinning")
-    const path = location.pathname.slice(
-      baseURL.length + 1, location.pathname.length
-    )
-    route(path)
+  if (button) {
+    button.classList.add("spinning")
+    button.disabled = true
+  }
+  if (progress) progress.style.display = "block"
+  if (bar) bar.style.width = "0%"
+  if (label) label.textContent = "Starting scan…"
+
+  const renderProgress = (status: ScanStatus): void => {
+    // total is 0 until the server finishes collecting paths; show an
+    // indeterminate message until then, a percentage once it's known.
+    if (status.total > 0) {
+      const pct = Math.min(
+        100, Math.round((status.processed / status.total) * 100)
+      )
+      if (bar) {
+        bar.classList.remove("indeterminate")
+        bar.style.width = pct + "%"
+      }
+      if (label) {
+        label.textContent =
+          `Scanning ${status.processed} / ${status.total} files (${pct}%)`
+      }
+    } else {
+      if (bar) bar.classList.add("indeterminate")
+      if (label) label.textContent = "Scanning…"
+    }
+  }
+
+  const finish = (): void => {
+    if (button) {
+      button.classList.remove("spinning")
+      button.disabled = false
+    }
+    if (bar) {
+      bar.classList.remove("indeterminate")
+      bar.style.width = "100%"
+    }
+    if (label) label.textContent = "Scan complete"
+    // Leave the completed bar visible briefly, then hide it and re-render the
+    // current view against the refreshed catalog.
+    window.setTimeout(() => {
+      if (progress) progress.style.display = "none"
+      const path = location.pathname.slice(
+        baseURL.length + 1, location.pathname.length
+      )
+      route(path)
+    }, 600)
   }
 
   const poll = (): void => {
-    ajax<{ scanning: boolean; track_count: number }>(
+    ajax<ScanStatus>(
       "/scan-status",
       (status) => {
+        renderProgress(status)
         if (status.scanning) {
-          window.setTimeout(poll, 1000)
+          window.setTimeout(poll, 500)
         } else {
-          stopAndRender()
+          finish()
         }
       }
     )
@@ -550,7 +592,11 @@ function reloadCatalog(): void {
     null,
     () => poll(),
     (status) => {
-      if (button) button.classList.remove("spinning")
+      if (button) {
+        button.classList.remove("spinning")
+        button.disabled = false
+      }
+      if (progress) progress.style.display = "none"
       throw new Error(`Reload failed: ${status}`)
     }
   )
@@ -1475,8 +1521,12 @@ const printObj = {
 function viewController(): Record<string, Function> {
   return {
     framework(): void {
-      function showSettings(): void {
-        toggle("settingsBubble")
+      function openSettings(): void {
+        $("settingsModal").style.display = "flex"
+      }
+
+      function closeSettings(): void {
+        $("settingsModal").style.display = "none"
       }
 
       shaven(
@@ -1490,8 +1540,7 @@ function viewController(): Record<string, Function> {
                 ]
               ],
               ["div#controls"],
-              ["button#reload", { "title": "Rescan music folder" }],
-              ["button#settings"]
+              ["button#settings", { "title": "Settings" }]
             ],
             ["div#c1",
               ["input#search", {type: "search", placeholder: "search"}],
@@ -1503,7 +1552,30 @@ function viewController(): Record<string, Function> {
             ["div#c3"],
             ["div#c4"],
             ["div#Bubble.bubble", {style: "display:none"}],
-            ["div#addToPlaylistBubble.bubble", {style: "display:none"}]
+            ["div#addToPlaylistBubble.bubble", {style: "display:none"}],
+            ["div#settingsModal", {style: "display:none"},
+              ["div#settingsDialog.modalDialog",
+                ["div.modalHeader",
+                  ["h2", "Settings"],
+                  ["button#settingsClose",
+                    { "title": "Close", "aria-label": "Close" }, "×"]
+                ],
+                ["div.modalBody",
+                  ["section.settingsSection",
+                    ["h3", "Music library"],
+                    ["p.settingsHint",
+                      "Rescan the music folder to pick up files added, " +
+                      "removed, or retagged on disk."],
+                    ["button#reload", { "title": "Rescan music folder" },
+                      "Rescan library"],
+                    ["div#scanProgress", { "style": "display:none" },
+                      ["div#scanProgressBar"]
+                    ],
+                    ["p#scanProgressLabel"]
+                  ]
+                ]
+              ]
+            ]
           ]
         ]
       )
@@ -1565,8 +1637,27 @@ function viewController(): Record<string, Function> {
       })
 
       $("settings").addEventListener("click", (e: Event) => {
-        showSettings()
+        openSettings()
         e.stopPropagation()
+      })
+
+      $("settingsClose").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        closeSettings()
+      })
+
+      // Click on the dim backdrop (outside the dialog) closes the modal;
+      // clicks inside the dialog must not bubble up to trigger that.
+      $("settingsModal").addEventListener("click", () => closeSettings())
+      $("settingsDialog").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+      })
+
+      document.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Escape" &&
+            $("settingsModal").style.display !== "none") {
+          closeSettings()
+        }
       })
     },
 
