@@ -17,7 +17,11 @@ set -eu
 : "${WAIT_SECONDS:=300}"
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-BINARY="$SCRIPT_DIR/../target/release/tunediver-api"
+SERVER_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+# Use the globally installed binary (cargo install --path server) so the
+# service no longer depends on target/release, which gets purged. Override
+# with TUNEDIVER_BIN if installed elsewhere.
+BINARY="${TUNEDIVER_BIN:-$HOME/.cargo/bin/tunediver-api}"
 
 elapsed=0
 while [ "$elapsed" -lt "$WAIT_SECONDS" ]; do
@@ -31,4 +35,7 @@ done
 export ROCKET_MUSIC_PATH="$MUSIC_DIR"
 export ROCKET_ADDRESS
 export ROCKET_PORT
+# The binary serves the frontend from ../frontend/public relative to its CWD,
+# so anchor the working directory to the repo's server dir.
+cd "$SERVER_DIR"
 exec "$BINARY"

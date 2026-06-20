@@ -35,5 +35,10 @@ website-serve:
 
 .PHONY: restart
 restart:
-	cd server && cargo build --release
+	cargo install --path ./server --force
 	launchctl kickstart -k gui/$(shell id -u)/com.tunediver.server
+
+
+.PHONY: install
+install:
+	cargo install --path ./server
