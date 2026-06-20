@@ -2,8 +2,10 @@
 .DS_Store
 target/
 
-# SQLite metadata/cover cache (and WAL sidecars), created at runtime next to
-# the music folder; e.g. repo root when running against ./example_music.
+# SQLite metadata/cover cache (and WAL sidecars). The deployed instance keeps
+# this under ~/Library/Application Support/Tunediver; dev runs (make start /
+# start-with-path) write it into server/ via ROCKET_CACHE_DB_PATH so they don't
+# share the deployed instance's playlists. This pattern matches it anywhere.
 tunediver-cache.db
 tunediver-cache.db-wal
 tunediver-cache.db-shm

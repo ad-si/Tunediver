@@ -3,9 +3,17 @@ help: makefile
 	@tail -n +4 makefile | grep ".PHONY"
 
 
+# Local dev cache DB, kept separate from the deployed instance's cache (which
+# lives in ~/Library/Application Support/Tunediver via the default). The
+# LaunchAgent runs the release binary directly, not these makefile targets, so
+# overriding the path here only affects dev runs — without it, dev and prod
+# share one DB and dev would show the deployed instance's playlists.
+DEV_CACHE_DB ?= $(shell pwd)/tunediver-cache.db
+
+
 .PHONY: start
 start: build
-	cargo run
+	ROCKET_CACHE_DB_PATH=$(DEV_CACHE_DB) cargo run
 
 
 .PHONY: start-with-path
@@ -14,7 +22,7 @@ start-with-path: build
 		echo "Usage: make start-with-path MUSIC_PATH=/path/to/music"; \
 		exit 1; \
 	fi
-	ROCKET_MUSIC_PATH=$(MUSIC_PATH) cargo run
+	ROCKET_MUSIC_PATH=$(MUSIC_PATH) ROCKET_CACHE_DB_PATH=$(DEV_CACHE_DB) cargo run
 
 
 .PHONY: build
