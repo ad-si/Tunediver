@@ -1227,7 +1227,11 @@ const printObj = {
             }],
             ["nav#songNav",
               ["h2#heading", songData.title],
-              ["p#trackArtist", songData.track_artist || ""],
+              ["p#trackArtist",
+                ["a#trackArtistLink",
+                  { "href": baseURL + "/" + artistSlug },
+                  songData.track_artist || ""],
+              ],
               ["p#dateAdded",
                 songData.date_added
                   ? "Added " + songData.date_added
@@ -1256,6 +1260,18 @@ const printObj = {
 
       container.onclick = (e: MouseEvent) => {
         let target = e.target as HTMLElement
+
+        // The artist name links to the artist's page; route in-app rather than
+        // following the anchor's href so it stays a single-page navigation.
+        if (target.id === "trackArtistLink") {
+          e.preventDefault()
+          e.stopPropagation()
+          history.pushState(
+            { "url": artistSlug }, artistSlug, baseURL + "/" + artistSlug
+          )
+          route(artistSlug)
+          return false
+        }
 
         if (target.id === "playSong") {
           e.preventDefault()

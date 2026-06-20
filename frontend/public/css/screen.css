@@ -684,6 +684,16 @@ input[type="search"] {
   line-height: 1.2;
 }
 
+#trackArtist a {
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
+}
+
+#trackArtist a:hover {
+  text-decoration: underline;
+}
+
 #dateAdded {
   color: var(--text-muted);
   font-size: 12px;
