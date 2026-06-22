@@ -2,7 +2,6 @@
 extern crate rocket;
 mod db;
 
-use rocket::fs::FileServer;
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::State;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -11,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use rust_embed::RustEmbed;
 
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, FileType, TaggedFileExt};
@@ -1275,12 +1276,61 @@ fn not_found() -> Json<ErrorResponse> {
   })
 }
 
-// Catch-all route handler for client-side routing
-#[get("/<_path..>", rank = 100)]
-async fn catch_all(_path: PathBuf) -> Option<rocket::fs::NamedFile> {
-  rocket::fs::NamedFile::open("../frontend/public/index.html")
-    .await
-    .ok()
+// The frontend (HTML/CSS/JS/images) is baked into the binary at compile time
+// so the server is self-contained — no dependency on `../frontend/public` at
+// runtime. In debug builds rust-embed reads these from disk so edits show up
+// without a recompile; release builds embed the bytes (see build.rs).
+#[derive(RustEmbed)]
+#[folder = "../frontend/public"]
+struct Frontend;
+
+// A static asset served straight from the embedded bundle.
+struct EmbeddedAsset {
+  content_type: rocket::http::ContentType,
+  data: std::borrow::Cow<'static, [u8]>,
+}
+
+impl<'r> rocket::response::Responder<'r, 'static> for EmbeddedAsset {
+  fn respond_to(
+    self,
+    _: &'r rocket::Request<'_>,
+  ) -> rocket::response::Result<'static> {
+    rocket::Response::build()
+      .header(self.content_type)
+      .sized_body(self.data.len(), std::io::Cursor::new(self.data))
+      .ok()
+  }
+}
+
+// Look up an embedded file by its path (e.g. "js/tunediver.js"), inferring the
+// content type from the file extension.
+fn embedded_asset(path: &str) -> Option<EmbeddedAsset> {
+  let file = Frontend::get(path)?;
+  let content_type = Path::new(path)
+    .extension()
+    .and_then(|ext| ext.to_str())
+    .and_then(rocket::http::ContentType::from_extension)
+    .unwrap_or(rocket::http::ContentType::Bytes);
+  Some(EmbeddedAsset {
+    content_type,
+    data: file.data,
+  })
+}
+
+// Serve the SPA shell at the root.
+#[get("/")]
+fn index() -> Option<EmbeddedAsset> {
+  embedded_asset("index.html")
+}
+
+// Serve embedded static files (js, css, img, ...). Any path that doesn't map to
+// a real asset falls back to the SPA shell so client-side routing works.
+#[get("/<path..>", rank = 100)]
+fn static_files(path: PathBuf) -> Option<EmbeddedAsset> {
+  path
+    .to_str()
+    .and_then(embedded_asset)
+    .or_else(|| embedded_asset("index.html"))
 }
 
 // Serve the audio file for a given artist+song slug by resolving to the
@@ -1436,7 +1486,7 @@ fn rocket() -> _ {
   };
 
   rocket::build()
-    .mount("/", FileServer::from("../frontend/public"))
+    .mount("/", routes![index, static_files])
     .mount(
       "/api",
       routes![
@@ -1459,8 +1509,6 @@ fn rocket() -> _ {
         reorder_playlist_tracks,
       ],
     )
-    // Catch-all must be mounted last so it doesn't override other routes
-    .mount("/", routes![catch_all])
     .register("/", catchers![not_found])
     .manage(config)
     .manage(playlist_store)
