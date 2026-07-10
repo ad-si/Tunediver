@@ -35,6 +35,11 @@ struct Track {
   artist: String,
   title: String,
   path: PathBuf,
+  // URL slug key that `find_track` resolves back to this track. Normally the
+  // plain title; when several files share the same (artist, title) it carries
+  // a path-derived discriminator so each file is individually addressable.
+  // Populated by `assign_track_slugs` when the catalog is built.
+  slug: String,
 }
 
 #[derive(Debug)]
@@ -495,14 +500,17 @@ impl Catalog {
       .collect()
   }
 
-  // Find a track by artist + url-encoded title. If multiple tracks share
-  // the same artist and title, the first one in catalog order wins.
-  fn find_track(&self, artist: &str, title_slug: &str) -> Option<&Track> {
-    let decoded = urlencoding::decode(title_slug).ok()?;
+  // Find a track by artist + url-encoded slug. For a track with a unique
+  // (artist, title) the slug is just its title; files that share an
+  // (artist, title) carry a path-derived discriminator (see
+  // `assign_track_slugs`), so each resolves to its own file rather than all
+  // collapsing onto the first match.
+  fn find_track(&self, artist: &str, slug: &str) -> Option<&Track> {
+    let decoded = urlencoding::decode(slug).ok()?;
     self
       .tracks
       .iter()
-      .find(|t| t.title == decoded && artist_matches(&t.artist, artist))
+      .find(|t| t.slug == decoded && artist_matches(&t.artist, artist))
   }
 }
 
@@ -625,12 +633,55 @@ impl PlaylistStore {
   }
 }
 
+// Short, stable, URL-safe discriminator derived from a track's file path,
+// used to tell apart multiple files that carry identical (artist, title) tags
+// (e.g. a studio and an acoustic recording tagged the same, or duplicate
+// copies). FNV-1a over the path bytes — a fixed algorithm, so the value is
+// stable across restarts and rescans as long as the file keeps its path,
+// independent of the standard library's (unspecified) default hasher.
+fn path_discriminator(path: &Path) -> String {
+  let mut hash: u32 = 0x811c_9dc5;
+  for byte in path.to_string_lossy().bytes() {
+    hash ^= byte as u32;
+    hash = hash.wrapping_mul(0x0100_0193);
+  }
+  format!("{:08x}", hash)
+}
+
+// Assign every track its URL slug key (the value `find_track` resolves back).
+// A track whose (artist, title) is unique in the catalog gets the plain title,
+// so its URLs stay clean and unchanged. When several files share the same
+// (artist, title) — the pair the catalog otherwise resolves by — each gets a
+// path-derived discriminator appended, so all of them become individually
+// addressable instead of every copy collapsing onto the first match. The slug
+// is stored decoded; endpoints URL-encode it when building links.
+fn assign_track_slugs(tracks: &mut [Track]) {
+  let mut counts: HashMap<(String, String), usize> = HashMap::new();
+  for t in tracks.iter() {
+    *counts
+      .entry((t.artist.clone(), t.title.clone()))
+      .or_insert(0) += 1;
+  }
+  for t in tracks.iter_mut() {
+    let ambiguous = counts
+      .get(&(t.artist.clone(), t.title.clone()))
+      .copied()
+      .unwrap_or(1)
+      > 1;
+    t.slug = if ambiguous {
+      format!("{} ({})", t.title, path_discriminator(&t.path))
+    } else {
+      t.title.clone()
+    };
+  }
+}
+
 fn track_to_song(track: &Track) -> Song {
   Song {
     id: track.id,
     title: track.title.clone(),
-    slug: encode(&track.title),
-    src: format!("/api/{}/{}", encode(&track.artist), encode(&track.title)),
+    slug: encode(&track.slug),
+    src: format!("/api/{}/{}", encode(&track.artist), encode(&track.slug)),
     track_artist: track.artist.clone(),
     artist_slug: encode(&track.artist),
   }
@@ -795,13 +846,13 @@ fn get_song(
         data: SingleSong {
           id: track.id,
           title: track.title.clone(),
-          slug: encode(&track.title),
+          slug: encode(&track.slug),
           track_artist: track.artist.clone(),
           lyrics,
           src: format!(
             "/api/{}/{}",
             encode(&track.artist),
-            encode(&track.title)
+            encode(&track.slug)
           ),
           file_name,
           file_path,
@@ -1053,8 +1104,8 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
           artist: tr.artist.clone(),
           title: tr.title.clone(),
           available: true,
-          slug: encode(&t.title),
-          src: format!("/api/{}/{}", encode(&t.artist), encode(&t.title)),
+          slug: encode(&t.slug),
+          src: format!("/api/{}/{}", encode(&t.artist), encode(&t.slug)),
           artist_slug: encode(&t.artist),
           track_artist: t.artist.clone(),
         },
@@ -1623,12 +1674,54 @@ mod tests {
   }
 
   #[test]
+  fn slugs_disambiguate_only_colliding_artist_title() {
+    let track = |id, artist: &str, title: &str, path: &str| Track {
+      id,
+      artist: artist.to_string(),
+      title: title.to_string(),
+      path: PathBuf::from(path),
+      slug: String::new(),
+    };
+    let mut tracks = vec![
+      // Three files with identical tags — each must get a distinct slug.
+      track(0, "Herbie Hancock", "Watermelon Man", "/a.mp3"),
+      track(1, "Herbie Hancock", "Watermelon Man", "/b.mp3"),
+      track(2, "Herbie Hancock", "Watermelon Man", "/c.mp3"),
+      // Same title, different artist → its own (artist, title), stays clean.
+      track(3, "Someone Else", "Watermelon Man", "/d.mp3"),
+      // A genuinely unique track keeps its plain title as the slug.
+      track(4, "Herbie Hancock", "Cantaloupe Island", "/e.mp3"),
+    ];
+    assign_track_slugs(&mut tracks);
+
+    // The unique tracks keep clean, title-only slugs.
+    assert_eq!(tracks[3].slug, "Watermelon Man");
+    assert_eq!(tracks[4].slug, "Cantaloupe Island");
+
+    // The three colliding copies get distinct, discriminated slugs...
+    let colliding: Vec<&str> =
+      tracks[0..3].iter().map(|t| t.slug.as_str()).collect();
+    assert!(colliding.iter().all(|s| s.starts_with("Watermelon Man (")));
+    let distinct: BTreeSet<&&str> = colliding.iter().collect();
+    assert_eq!(distinct.len(), 3, "each copy must get its own slug");
+
+    // ...and each slug resolves back to exactly its own file via find_track.
+    let catalog = Catalog { tracks };
+    for id in 0..3 {
+      let slug = encode(&catalog.tracks[id].slug);
+      let found = catalog.find_track("Herbie Hancock", &slug).unwrap();
+      assert_eq!(found.id, id);
+    }
+  }
+
+  #[test]
   fn catalog_unifies_artists_across_collaborations() {
     let track = |id, artist: &str| Track {
       id,
       artist: artist.to_string(),
       title: format!("Song {}", id),
       path: PathBuf::from(format!("/{}.mp3", id)),
+      slug: format!("Song {}", id),
     };
     let catalog = Catalog {
       tracks: vec![

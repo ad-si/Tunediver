@@ -194,8 +194,12 @@ pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
       artist,
       title,
       path: PathBuf::from(path),
+      // Filled in by `assign_track_slugs` below, once all tracks are loaded
+      // and (artist, title) collisions can be detected.
+      slug: String::new(),
     });
   }
+  crate::assign_track_slugs(&mut tracks);
   Ok(crate::Catalog { tracks })
 }
 
