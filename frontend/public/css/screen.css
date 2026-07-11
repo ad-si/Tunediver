@@ -631,6 +631,56 @@ input[type="search"] {
   right: 0;
 }
 
+/* Per-track "Added At" date shown on the right of a playlist row. Sits left
+   of the hover remove button; the row's title link reserves space for it. */
+.playlistRow a {
+  padding-right: 96px;
+}
+
+.row .added {
+  position: absolute;
+  right: 24px;
+  top: 0;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Sort controls in the playlist detail panel (c4). */
+#playlistSort {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#playlistSort #sortLabel {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+#playlistSort .sortBtn {
+  background: transparent;
+  border: 1px solid var(--row-stripe);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+#playlistSort .sortBtn:hover {
+  color: var(--text-strong);
+}
+
+#playlistSort .sortBtn.active {
+  color: var(--text-strong);
+  border-color: var(--accent);
+}
+
 /* Sits inside the existing 20px-wide button gutter so the song title
    stays anchored — exactly like the hover play button. */
 .row.playing::before {

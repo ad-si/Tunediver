@@ -57,6 +57,8 @@ type PlaylistTrack = {
   src: string
   artist_slug: string
   track_artist: string
+  // ISO 8601 timestamp of when the track was added to the playlist, if known.
+  added_at?: string
 }
 
 type Playlist = {

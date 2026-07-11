@@ -524,6 +524,12 @@ impl Catalog {
 struct TrackRef {
   artist: String,
   title: String,
+  // When this track was added to the playlist, as an ISO 8601 string (e.g.
+  // "2016-08-19T20:09:09Z"). Imported from external sources such as a Spotify
+  // CSV export; `None` for tracks added before this field existed or without a
+  // known timestamp.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  added_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1033,6 +1039,8 @@ struct PlaylistTrack {
   src: String,
   artist_slug: String,
   track_artist: String,
+  // ISO 8601 timestamp of when the track was added to the playlist, or `None`.
+  added_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1068,6 +1076,8 @@ struct RenamePlaylistInput {
 struct TrackRefInput {
   artist: String,
   title: String,
+  #[serde(default)]
+  added_at: Option<String>,
 }
 
 fn summarize(
@@ -1108,6 +1118,7 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
           src: format!("/api/{}/{}", encode(&t.artist), encode(&t.slug)),
           artist_slug: encode(&t.artist),
           track_artist: t.artist.clone(),
+          added_at: tr.added_at.clone(),
         },
         None => PlaylistTrack {
           artist: tr.artist.clone(),
@@ -1117,6 +1128,7 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
           src: String::new(),
           artist_slug: encode(&tr.artist),
           track_artist: tr.artist.clone(),
+          added_at: tr.added_at.clone(),
         },
       }
     })
@@ -1264,6 +1276,12 @@ fn add_playlist_track(
   playlist.tracks.push(TrackRef {
     artist: artist.to_string(),
     title: title.to_string(),
+    added_at: input
+      .added_at
+      .as_deref()
+      .map(str::trim)
+      .filter(|s| !s.is_empty())
+      .map(str::to_string),
   });
   playlist.updated_at = now_secs();
   let detail = hydrate(playlist, &config.catalog.read().unwrap());
@@ -1311,6 +1329,7 @@ fn reorder_playlist_tracks(
     .map(|t| TrackRef {
       artist: t.artist,
       title: t.title,
+      added_at: t.added_at,
     })
     .collect();
   playlist.updated_at = now_secs();

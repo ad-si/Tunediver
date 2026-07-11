@@ -89,16 +89,40 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        position    INTEGER NOT NULL,
        artist      TEXT NOT NULL,
        title       TEXT NOT NULL,
+       added_at    TEXT,
        PRIMARY KEY (playlist_id, position)
      );
      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);",
   )?;
+  // Migrate databases created before `playlist_tracks.added_at` existed.
+  // `CREATE TABLE IF NOT EXISTS` leaves an existing table untouched, so add the
+  // column explicitly; ignore the error raised when it is already present.
+  if !column_exists(conn, "playlist_tracks", "added_at")? {
+    conn.execute("ALTER TABLE playlist_tracks ADD COLUMN added_at TEXT", [])?;
+  }
   conn.execute(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
      ON CONFLICT(key) DO NOTHING",
     params![SCHEMA_VERSION.to_string()],
   )?;
   Ok(())
+}
+
+// Whether `table` has a column named `column`, via `PRAGMA table_info`.
+fn column_exists(
+  conn: &Conn,
+  table: &str,
+  column: &str,
+) -> rusqlite::Result<bool> {
+  let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+  let mut rows = stmt.query([])?;
+  while let Some(row) = rows.next()? {
+    let name: String = row.get(1)?;
+    if name == column {
+      return Ok(true);
+    }
+  }
+  Ok(false)
 }
 
 // Track cache -----------------------------------------------------------------
@@ -270,12 +294,13 @@ fn load_playlist_tracks(
   playlist_id: &str,
 ) -> rusqlite::Result<Vec<crate::TrackRef>> {
   let mut stmt = conn.prepare(
-    "SELECT artist, title FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+    "SELECT artist, title, added_at FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
   )?;
   let rows = stmt.query_map(params![playlist_id], |r| {
     Ok(crate::TrackRef {
       artist: r.get(0)?,
       title: r.get(1)?,
+      added_at: r.get(2)?,
     })
   })?;
   rows.collect()
@@ -305,9 +330,9 @@ pub fn save_playlists(
     )?;
     for (tpos, t) in p.tracks.iter().enumerate() {
       tx.execute(
-        "INSERT INTO playlist_tracks (playlist_id, position, artist, title)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![p.id, tpos as i64, t.artist, t.title],
+        "INSERT INTO playlist_tracks (playlist_id, position, artist, title, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![p.id, tpos as i64, t.artist, t.title, t.added_at],
       )?;
     }
   }
@@ -472,6 +497,7 @@ mod tests {
         tracks: vec![crate::TrackRef {
           artist: "Fred".to_string(),
           title: "Robot Poetry".to_string(),
+          added_at: Some("2016-08-19T20:09:09Z".to_string()),
         }],
         created_at: 5,
         updated_at: 6,
@@ -483,10 +509,12 @@ mod tests {
           crate::TrackRef {
             artist: "A".to_string(),
             title: "One".to_string(),
+            added_at: None,
           },
           crate::TrackRef {
             artist: "B".to_string(),
             title: "Two".to_string(),
+            added_at: None,
           },
         ],
         created_at: 1,
@@ -509,6 +537,15 @@ mod tests {
       .map(|t| (t.artist.as_str(), t.title.as_str()))
       .collect();
     assert_eq!(tracks, vec![("A", "One"), ("B", "Two")]);
+
+    // The per-track `added_at` timestamp survives the round-trip, including
+    // the `None` case (tracks with no known add time).
+    let first = &loaded[0];
+    assert_eq!(
+      first.tracks[0].added_at.as_deref(),
+      Some("2016-08-19T20:09:09Z")
+    );
+    assert_eq!(second.tracks[0].added_at, None);
   }
 
   #[test]
@@ -523,6 +560,7 @@ mod tests {
         tracks: vec![crate::TrackRef {
           artist: "X".to_string(),
           title: "Y".to_string(),
+          added_at: None,
         }],
         created_at: 1,
         updated_at: 1,

@@ -48,6 +48,13 @@ let currentTab: "artists" | "songs" | "playlists" = "artists"
 // so the play/remove handlers in the playlist's song rows can reference it.
 let currentPlaylistId: string | null = null
 
+// How the open playlist's tracks are ordered for display. "index" keeps the
+// stored playlist order; the "added-*" modes sort by the per-track Added At
+// timestamp. Sorting only affects rendering — each row still carries its
+// original playlist index so play/remove target the correct backend position.
+type PlaylistSort = "index" | "added-asc" | "added-desc"
+let playlistSort: PlaylistSort = "index"
+
 // When true, prev/next and auto-advance pick a random track from the active
 // context (playlist, songs list, or current artist) instead of the
 // sequential neighbour. Toggled by the shuffle button in the player.
@@ -1505,30 +1512,63 @@ const printObj = {
   playlist(id: string): void {
     ajax<Playlist>(`/playlists/${id}`, (playlist) => {
       currentPlaylistId = playlist.id
-      $("c3").innerHTML = ""
       $("c3").style.display = ""
 
-      playlist.tracks.forEach((track, index) => {
-        const link = shaven(["a", track.title]).rootElement
-        const play = shaven(["button#.play"]).rootElement
-        const remove = shaven(["button#.remove"]).rootElement
+      // "2016-08-19T20:09:09Z" → "2016-08-19"; empty when unknown.
+      const formatAdded = (iso?: string): string => (iso ? iso.slice(0, 10) : "")
 
-        const row = shaven(
-          ["div#.row", {
-            "title": (track.track_artist || "") + " — " + track.title,
-            "data-playlist-index": String(index),
-            "data-artist-slug": track.artist_slug,
-            "data-song-slug": track.slug,
-          },
-            [play],
-            [link],
-            [remove],
-          ]
-        ).rootElement
+      // Track entries paired with their original playlist index, reordered for
+      // display per `playlistSort`. The index is preserved so the row's
+      // data-playlist-index still maps back to `playlist.tracks`.
+      const sortedEntries = (): { track: PlaylistTrack; index: number }[] => {
+        const entries = playlist.tracks.map((track, index) => ({ track, index }))
+        if (playlistSort === "index") return entries
+        const dir = playlistSort === "added-asc" ? 1 : -1
+        return entries.sort((a, b) => {
+          const av = a.track.added_at || ""
+          const bv = b.track.added_at || ""
+          // Tracks with no timestamp always sink to the bottom; equal times
+          // keep their stored order.
+          if (!av && !bv) return a.index - b.index
+          if (!av) return 1
+          if (!bv) return -1
+          if (av === bv) return a.index - b.index
+          return av < bv ? -dir : dir
+        })
+      }
 
-        if (!track.available) row.classList.add("unavailable")
-        $("c3").appendChild(row)
-      })
+      const renderTracks = (): void => {
+        $("c3").innerHTML = ""
+        sortedEntries().forEach(({ track, index }) => {
+          const link = shaven(["a", track.title]).rootElement
+          const play = shaven(["button#.play"]).rootElement
+          const remove = shaven(["button#.remove"]).rootElement
+          const added = shaven(
+            ["span#.added", { "title": track.added_at || "" },
+              formatAdded(track.added_at)]
+          ).rootElement
+
+          const row = shaven(
+            ["div#.row.playlistRow", {
+              "title": (track.track_artist || "") + " — " + track.title,
+              "data-playlist-index": String(index),
+              "data-artist-slug": track.artist_slug,
+              "data-song-slug": track.slug,
+            },
+              [play],
+              [link],
+              [added],
+              [remove],
+            ]
+          ).rootElement
+
+          if (!track.available) row.classList.add("unavailable")
+          $("c3").appendChild(row)
+        })
+        updatePlayingMarkers()
+      }
+
+      renderTracks()
 
       $("c3").onclick = (e: MouseEvent) => {
         const target = e.target as HTMLElement
@@ -1591,10 +1631,40 @@ const printObj = {
                   ? "1 track"
                   : playlist.tracks.length + " tracks"
               ],
+              ["div#playlistSort",
+                ["span#sortLabel", "Sort:"],
+                ["button#.sortBtn", { "data-sort": "index" }, "Order"],
+                ["button#.sortBtn", { "data-sort": "added-asc" }, "Added ↑"],
+                ["button#.sortBtn", { "data-sort": "added-desc" }, "Added ↓"],
+              ],
             ],
           ]
         ]
       )
+
+      // Reflect the active sort on the buttons and re-render the track list
+      // when a different mode is chosen.
+      const sortControls = $("c4").querySelectorAll(
+        ".sortBtn"
+      ) as NodeListOf<HTMLElement>
+      const markActiveSort = (): void => {
+        sortControls.forEach((btn) => {
+          btn.classList.toggle(
+            "active",
+            btn.getAttribute("data-sort") === playlistSort
+          )
+        })
+      }
+      sortControls.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const mode = btn.getAttribute("data-sort") as PlaylistSort | null
+          if (!mode || mode === playlistSort) return
+          playlistSort = mode
+          markActiveSort()
+          renderTracks()
+        })
+      })
+      markActiveSort()
 
       const renameEl = document.getElementById("renamePlaylist")
       if (renameEl) {
