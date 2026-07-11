@@ -689,6 +689,47 @@ function reloadCatalog(): void {
   )
 }
 
+// Download all playlists as a JSON backup. The server returns the same shape
+// as the legacy `playlists.json`, so the file round-trips back through import.
+// Filename scheme: `2026-07-11t1017_tunediver_playlists.json` (local time).
+function exportPlaylists(): void {
+  const button =
+    document.getElementById("exportPlaylists") as HTMLButtonElement | null
+  if (button) button.disabled = true
+
+  const reenable = (): void => {
+    if (button) button.disabled = false
+  }
+
+  const now = new Date()
+  const pad = (n: number): string => (n < 10 ? "0" + n : String(n))
+  const stamp =
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+    `t${pad(now.getHours())}${pad(now.getMinutes())}`
+
+  fetch(baseURL + "/api/playlists/export")
+    .then((response) => {
+      if (!response.ok) throw new Error(`Export failed: ${response.status}`)
+      return response.blob()
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `${stamp}_tunediver_playlists.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      reenable()
+    })
+    .catch((error) => {
+      console.error(error)
+      window.alert("Could not export playlists.")
+      reenable()
+    })
+}
+
 // Prompt for a name, POST, then refresh the list and open the new playlist.
 function createPlaylistFlow(): void {
   const name = prompt("Playlist name")
@@ -1742,6 +1783,15 @@ function viewController(): Record<string, Function> {
                       ["div#scanProgressBar"]
                     ],
                     ["p#scanProgressLabel"]
+                  ],
+                  ["section.settingsSection",
+                    ["h3", "Playlists"],
+                    ["p.settingsHint",
+                      "Download all playlists as a JSON file you can keep " +
+                      "as a backup or re-import later."],
+                    ["button#exportPlaylists",
+                      { "title": "Export playlists to a JSON file" },
+                      "Export playlists"]
                   ]
                 ]
               ]
@@ -1804,6 +1854,11 @@ function viewController(): Record<string, Function> {
       $("reload").addEventListener("click", (e: Event) => {
         e.stopPropagation()
         reloadCatalog()
+      })
+
+      $("exportPlaylists").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        exportPlaylists()
       })
 
       $("settings").addEventListener("click", (e: Event) => {

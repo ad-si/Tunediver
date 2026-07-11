@@ -1159,6 +1159,19 @@ fn list_playlists(
   })
 }
 
+// Export all playlists as a single JSON document in the same shape as the
+// legacy `playlists.json` import format, so users can back them up and
+// re-import them elsewhere. The static `export` segment outranks the dynamic
+// `/playlists/<id>` route, so there is no collision.
+#[get("/playlists/export")]
+fn export_playlists(store: &State<PlaylistStore>) -> Json<PlaylistFile> {
+  let playlists = store.playlists.read().expect("playlists lock poisoned");
+  Json(PlaylistFile {
+    version: 1,
+    playlists: playlists.clone(),
+  })
+}
+
 #[post("/playlists", data = "<input>")]
 fn create_playlist(
   input: Json<CreatePlaylistInput>,
@@ -1570,6 +1583,7 @@ fn rocket() -> _ {
         reload_catalog,
         scan_status,
         list_playlists,
+        export_playlists,
         create_playlist,
         get_playlist,
         rename_playlist,

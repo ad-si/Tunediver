@@ -237,8 +237,10 @@ h3 {
    player.css, which loads after this file. Their responsive behaviour is
    defined there too. */
 
-/* The rescan button lives in the settings modal as an icon + label button. */
-#reload {
+/* The rescan and export buttons live in the settings modal as icon + label
+   buttons sharing the same pill styling. */
+#reload,
+#exportPlaylists {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -252,11 +254,13 @@ h3 {
   font-size: 13px;
 }
 
-#reload:hover {
+#reload:hover,
+#exportPlaylists:hover {
   color: var(--accent-hover);
 }
 
-#reload:disabled {
+#reload:disabled,
+#exportPlaylists:disabled {
   opacity: 0.6;
   cursor: default;
   color: var(--text-strong);
@@ -266,6 +270,7 @@ h3 {
    with `currentColor`, so hover/active/theme colors keep working. This shared
    rule sets up the mask plumbing; each button supplies its glyph + size. */
 #reload:before,
+#exportPlaylists:before,
 #settings:before,
 #artists:before,
 #songs:before,
@@ -294,6 +299,13 @@ h3 {
 
 #reload.spinning:before {
   animation: reload-spin 0.8s linear infinite;
+}
+
+#exportPlaylists:before {
+  width: 16px;
+  height: 16px;
+  -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' x2='12' y1='15' y2='3'/></svg>");
+  mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' x2='12' y1='15' y2='3'/></svg>");
 }
 
 @keyframes reload-spin {
@@ -373,6 +385,11 @@ h3 {
   font-size: 14px;
   font-weight: 400;
   color: var(--text-strong);
+}
+
+/* Add breathing room between stacked sections in the settings modal. */
+.settingsSection + .settingsSection {
+  margin-top: 28px;
 }
 
 .settingsHint {
