@@ -1143,6 +1143,81 @@ function songMetaNode(song: Song): any[] {
   return node
 }
 
+// A single line of time-synced ("LRC") lyrics: its start time in seconds and
+// the text with all timestamp tags stripped.
+interface SyncedLyricLine {
+  time: number
+  text: string
+}
+
+// Parse LRC-style time-synced lyrics (lines beginning with `[mm:ss.xx]`).
+// Returns null when the text carries no timestamp tags at all, i.e. it's
+// plain, unsynced lyrics that should be shown verbatim. A line may carry more
+// than one leading timestamp (e.g. a repeated chorus); each becomes its own
+// entry. Lines without a leading timestamp (blank lines, `[ar:…]`/`[ti:…]`
+// metadata headers) are dropped. The result is sorted by time.
+function parseSyncedLyrics(raw: string): SyncedLyricLine[] | null {
+  const tagRe = /\[(\d{1,3}):(\d{2}(?:[.:]\d{1,3})?)\]/g
+  const lines: SyncedLyricLine[] = []
+  let sawTag = false
+
+  for (const rawLine of raw.split(/\r?\n/)) {
+    tagRe.lastIndex = 0
+    const times: number[] = []
+    let match: RegExpExecArray | null
+    let lastEnd = 0
+
+    // Collect only consecutive leading timestamp tags; stop at the first
+    // non-tag (ignoring whitespace between tags) so tags embedded mid-line
+    // aren't treated as line starts.
+    while ((match = tagRe.exec(rawLine)) !== null) {
+      if (rawLine.slice(lastEnd, match.index).trim() !== "") break
+      const mins = parseInt(match[1], 10)
+      const secs = parseFloat(match[2].replace(":", "."))
+      times.push(mins * 60 + secs)
+      lastEnd = tagRe.lastIndex
+    }
+
+    if (times.length === 0) continue
+    sawTag = true
+    const text = rawLine.slice(lastEnd).trim()
+    for (const time of times) {
+      lines.push({ time, text })
+    }
+  }
+
+  if (!sawTag) return null
+  lines.sort((a, b) => a.time - b.time)
+  return lines
+}
+
+// Build the shaven node for a song's lyrics. Plain lyrics render as a single
+// `<pre>` as before. Time-synced lyrics render as a `<div id="lyrics">` of
+// per-line `<div class="lyricLine">` elements (timestamps stripped, start
+// time kept in `data-time`); `updateSyncedLyrics` in player.ts highlights the
+// active line as playback progresses. The artist/song slugs are stamped on
+// the container so highlighting only runs when the detail view matches the
+// track that's actually playing.
+function lyricsNode(song: Song, artistSlug: string): any[] {
+  const raw = song.lyrics || ""
+  const synced = parseSyncedLyrics(raw)
+  if (!synced) {
+    return ["pre#lyrics", raw]
+  }
+
+  const node: any[] = ["div#lyrics.synced", {
+    "data-artist-slug": artistSlug,
+    "data-song-slug": song.slug,
+  }]
+  synced.forEach((line, i) => {
+    node.push(["div.lyricLine", {
+      "data-time": String(line.time),
+      "data-index": String(i),
+    }, line.text || " "])
+  })
+  return node
+}
+
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
@@ -1378,7 +1453,7 @@ const printObj = {
               ],
               songMetaNode(songData),
             ],
-            ["pre#lyrics", songData.lyrics || ""],
+            lyricsNode(songData, artistSlug),
           ]
         ]
       ).rootElement

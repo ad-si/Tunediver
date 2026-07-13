@@ -286,9 +286,53 @@ function playerUpdater(): void {
       progressInputEl.value = "0"
       progressInputEl.style.setProperty("--progress", "0%")
     }
+
+    updateSyncedLyrics()
   } catch (e) {
     console.error("Error in playerUpdater:", e)
   }
+}
+
+// Highlight the current line of time-synced lyrics as playback progresses.
+// No-op unless the detail view currently shows time-synced lyrics
+// (`#lyrics.synced`, produced by `lyricsNode`) for the track that's actually
+// playing; otherwise any stale highlight is cleared. The active line is the
+// last one whose `data-time` is at or before the current playback position.
+function updateSyncedLyrics(): void {
+  const container = document.getElementById("lyrics")
+  if (!container || !container.classList.contains("synced")) return
+
+  const lines = container.querySelectorAll<HTMLElement>(".lyricLine")
+
+  const matches =
+    currentlyPlaying !== null &&
+    container.getAttribute("data-artist-slug") === currentlyPlaying.artistSlug &&
+    container.getAttribute("data-song-slug") === currentlyPlaying.songSlug
+
+  if (!matches || !audio || isNaN(audio.currentTime)) {
+    lines.forEach((line) => line.classList.remove("active"))
+    return
+  }
+
+  const t = audio.currentTime
+  let activeIndex = -1
+  lines.forEach((line, i) => {
+    const time = parseFloat(line.getAttribute("data-time") || "")
+    if (!isNaN(time) && time <= t) activeIndex = i
+  })
+
+  lines.forEach((line, i) => {
+    if (i === activeIndex) {
+      // Scroll only when the active line changes, so smooth scrolling isn't
+      // retriggered on every timeupdate tick.
+      if (!line.classList.contains("active")) {
+        line.classList.add("active")
+        line.scrollIntoView({ block: "center", behavior: "smooth" })
+      }
+    } else {
+      line.classList.remove("active")
+    }
+  })
 }
 
 function timeLeft(): string {

@@ -763,6 +763,22 @@ input[type="search"] {
   font-size: 14px;
 }
 
+/* Time-synced lyrics: each line is highlighted as playback reaches it. */
+#lyrics.synced {
+  white-space: pre-wrap;
+}
+
+#lyrics.synced .lyricLine {
+  color: var(--text-muted);
+  padding: 1px 0;
+  transition: color 0.2s ease;
+}
+
+#lyrics.synced .lyricLine.active {
+  color: var(--text-strong);
+  font-weight: bold;
+}
+
 #heading {
   margin: 0 0 10px 0;
   line-height: 1.2;
