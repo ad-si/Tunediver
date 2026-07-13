@@ -1063,6 +1063,86 @@ function ajaxRequest<T>(
   x.send(body === null || body === undefined ? null : JSON.stringify(body))
 }
 
+// --- Song metadata formatting helpers ------------------------------------
+
+// mm:ss, or h:mm:ss for hour-plus tracks, from a whole-second duration.
+function formatDuration(totalSeconds: number): string {
+  const s = Math.floor(totalSeconds % 60)
+  const m = Math.floor((totalSeconds / 60) % 60)
+  const h = Math.floor(totalSeconds / 3600)
+  const ss = s < 10 ? "0" + s : String(s)
+  if (h > 0) {
+    const mm = m < 10 ? "0" + m : String(m)
+    return `${h}:${mm}:${ss}`
+  }
+  return `${m}:${ss}`
+}
+
+// Human-readable byte size, e.g. "8.2 MB".
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  const units = ["KB", "MB", "GB", "TB"]
+  let value = bytes / 1024
+  let i = 0
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024
+    i++
+  }
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[i]}`
+}
+
+// Sample rate in kHz, dropping a redundant ".0" (44100 → "44.1 kHz",
+// 48000 → "48 kHz").
+function formatSampleRate(hz: number): string {
+  const khz = hz / 1000
+  const text = Number.isInteger(khz) ? String(khz) : khz.toFixed(1)
+  return `${text} kHz`
+}
+
+// Channel count as a listener-facing label.
+function formatChannels(channels: number): string {
+  if (channels === 1) return "Mono"
+  if (channels === 2) return "Stereo"
+  return `${channels} channels`
+}
+
+// Build the shaven node for the technical-metadata definition list. Each field
+// is included only when the server supplied it, so unknown values are omitted
+// rather than shown blank. Returns a `<dl>` node (possibly empty, which the
+// `:empty` CSS rule hides).
+function songMetaNode(song: Song): any[] {
+  const rows: [string, string][] = []
+  if (song.duration_secs != null) {
+    rows.push(["Length", formatDuration(song.duration_secs)])
+  }
+  if (song.format) {
+    rows.push(["Format", song.format])
+  }
+  if (song.bitrate_kbps != null) {
+    rows.push(["Bitrate", `${song.bitrate_kbps} kbps`])
+  }
+  if (song.sample_rate_hz != null) {
+    rows.push(["Sample rate", formatSampleRate(song.sample_rate_hz)])
+  }
+  if (song.bit_depth != null) {
+    rows.push(["Bit depth", `${song.bit_depth}-bit`])
+  }
+  if (song.channels != null) {
+    rows.push(["Channels", formatChannels(song.channels)])
+  }
+  if (song.file_size != null) {
+    rows.push(["File size", formatFileSize(song.file_size)])
+  }
+
+  const node: any[] = ["dl#songMeta"]
+  for (const [label, value] of rows) {
+    node.push(["dt", label], ["dd", value])
+  }
+  return node
+}
+
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
@@ -1296,6 +1376,7 @@ const printObj = {
                   ? "Added " + songData.date_added
                   : "",
               ],
+              songMetaNode(songData),
             ],
             ["pre#lyrics", songData.lyrics || ""],
           ]

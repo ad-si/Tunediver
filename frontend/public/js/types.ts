@@ -10,6 +10,15 @@ type Song = {
   file_name?: string
   file_path?: string
   date_added?: string
+  // Technical audio properties, present only on the single-song detail
+  // response and only when known (the server omits unknown fields).
+  duration_secs?: number
+  bitrate_kbps?: number
+  sample_rate_hz?: number
+  bit_depth?: number
+  channels?: number
+  format?: string
+  file_size?: number
 }
 
 type Artist = {

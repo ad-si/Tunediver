@@ -20,6 +20,22 @@ pub type Conn = r2d2::PooledConnection<SqliteConnectionManager>;
 // false` is a cached negative result, so missing art is never re-probed.
 pub type CachedCover = (bool, Option<Vec<u8>>, Option<String>);
 
+// Technical audio properties read from the file's stream, as opposed to its
+// tags: playback length, bitrate, sample rate, bit depth, channel count, and
+// a human-readable container/format name. Every field is optional because
+// lofty can't always determine them (and older cache rows predate these
+// columns); `format == None` doubles as "not yet populated", triggering a
+// lazy backfill in the detail endpoint.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AudioProps {
+  pub duration_secs: Option<i64>,
+  pub bitrate_kbps: Option<i64>,
+  pub sample_rate_hz: Option<i64>,
+  pub bit_depth: Option<i64>,
+  pub channels: Option<i64>,
+  pub format: Option<String>,
+}
+
 // Everything cached for a single track. `path` is the canonicalization-free
 // on-disk path used both as the primary key and to locate the file for
 // streaming. `mtime`/`size` drive incremental rescans.
@@ -34,6 +50,7 @@ pub struct CachedTrack {
   pub has_cover: bool,
   pub cover_blob: Option<Vec<u8>>,
   pub cover_mime: Option<String>,
+  pub props: AudioProps,
 }
 
 const SCHEMA_VERSION: i64 = 1;
@@ -75,7 +92,13 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        date_added TEXT,
        has_cover  INTEGER NOT NULL DEFAULT 0,
        cover_blob BLOB,
-       cover_mime TEXT
+       cover_mime TEXT,
+       duration_secs   INTEGER,
+       bitrate_kbps    INTEGER,
+       sample_rate_hz  INTEGER,
+       bit_depth       INTEGER,
+       channels        INTEGER,
+       format          TEXT
      );
      CREATE TABLE IF NOT EXISTS playlists (
        id         TEXT PRIMARY KEY,
@@ -99,6 +122,22 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   // column explicitly; ignore the error raised when it is already present.
   if !column_exists(conn, "playlist_tracks", "added_at")? {
     conn.execute("ALTER TABLE playlist_tracks ADD COLUMN added_at TEXT", [])?;
+  }
+  // Migrate databases created before the technical audio-property columns
+  // existed. Existing rows get NULLs, which the detail endpoint backfills on
+  // first view (see `get_track_properties`).
+  for (column, ty) in [
+    ("duration_secs", "INTEGER"),
+    ("bitrate_kbps", "INTEGER"),
+    ("sample_rate_hz", "INTEGER"),
+    ("bit_depth", "INTEGER"),
+    ("channels", "INTEGER"),
+    ("format", "TEXT"),
+  ] {
+    if !column_exists(conn, "tracks", column)? {
+      conn
+        .execute(&format!("ALTER TABLE tracks ADD COLUMN {column} {ty}"), [])?;
+    }
   }
   conn.execute(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
@@ -150,13 +189,16 @@ pub fn load_track_stamps(
 pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
   conn.execute(
     "INSERT INTO tracks
-       (path, mtime, size, artist, title, lyrics, date_added, has_cover, cover_blob, cover_mime)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+       (path, mtime, size, artist, title, lyrics, date_added, has_cover, cover_blob, cover_mime,
+        duration_secs, bitrate_kbps, sample_rate_hz, bit_depth, channels, format)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
      ON CONFLICT(path) DO UPDATE SET
        mtime=excluded.mtime, size=excluded.size, artist=excluded.artist,
        title=excluded.title, lyrics=excluded.lyrics, date_added=excluded.date_added,
        has_cover=excluded.has_cover, cover_blob=excluded.cover_blob,
-       cover_mime=excluded.cover_mime",
+       cover_mime=excluded.cover_mime, duration_secs=excluded.duration_secs,
+       bitrate_kbps=excluded.bitrate_kbps, sample_rate_hz=excluded.sample_rate_hz,
+       bit_depth=excluded.bit_depth, channels=excluded.channels, format=excluded.format",
     params![
       t.path,
       t.mtime,
@@ -168,6 +210,12 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
       t.has_cover as i64,
       t.cover_blob,
       t.cover_mime,
+      t.props.duration_secs,
+      t.props.bitrate_kbps,
+      t.props.sample_rate_hz,
+      t.props.bit_depth,
+      t.props.channels,
+      t.props.format,
     ],
   )?;
   Ok(())
@@ -240,6 +288,61 @@ pub fn get_track_detail(
       |r| Ok((r.get(0)?, r.get(1)?)),
     )
     .optional()
+}
+
+// Technical audio properties + on-disk file size for the song-detail endpoint,
+// or None if the track has not been cached yet. `format == None` means the
+// row predates these columns (or the file couldn't be probed), signaling the
+// caller to backfill from disk.
+pub fn get_track_properties(
+  conn: &Conn,
+  path: &str,
+) -> rusqlite::Result<Option<(AudioProps, i64)>> {
+  conn
+    .query_row(
+      "SELECT duration_secs, bitrate_kbps, sample_rate_hz, bit_depth, channels,
+              format, size
+       FROM tracks WHERE path = ?1",
+      params![path],
+      |r| {
+        Ok((
+          AudioProps {
+            duration_secs: r.get(0)?,
+            bitrate_kbps: r.get(1)?,
+            sample_rate_hz: r.get(2)?,
+            bit_depth: r.get(3)?,
+            channels: r.get(4)?,
+            format: r.get(5)?,
+          },
+          r.get(6)?,
+        ))
+      },
+    )
+    .optional()
+}
+
+// Lazily backfill the audio-property columns for an already-cached track,
+// leaving all other columns (tags, cover, stamps) untouched. Used when the
+// detail endpoint reads a row that predates these columns.
+pub fn update_track_properties(
+  conn: &Conn,
+  path: &str,
+  props: &AudioProps,
+) -> rusqlite::Result<()> {
+  conn.execute(
+    "UPDATE tracks SET duration_secs=?2, bitrate_kbps=?3, sample_rate_hz=?4,
+       bit_depth=?5, channels=?6, format=?7 WHERE path=?1",
+    params![
+      path,
+      props.duration_secs,
+      props.bitrate_kbps,
+      props.sample_rate_hz,
+      props.bit_depth,
+      props.channels,
+      props.format,
+    ],
+  )?;
+  Ok(())
 }
 
 // Cover art for the cover endpoint. Returns None if the track has not been
@@ -375,6 +478,7 @@ mod tests {
       has_cover: false,
       cover_blob: None,
       cover_mime: None,
+      props: AudioProps::default(),
     }
   }
 
@@ -484,6 +588,48 @@ mod tests {
     assert!(blob.is_none());
     // Not-yet-scanned track → None (distinct from a known-no-cover track).
     assert_eq!(get_cover(&conn, "/m/missing.mp3").unwrap(), None);
+  }
+
+  #[test]
+  fn audio_properties_round_trip_and_backfill() {
+    let pool = temp_pool("audio_props");
+    let conn = pool.get().unwrap();
+
+    // A freshly scanned track carries its properties through the upsert.
+    let mut t = sample_track("/m/a.mp3");
+    t.props = AudioProps {
+      duration_secs: Some(215),
+      bitrate_kbps: Some(320),
+      sample_rate_hz: Some(44_100),
+      bit_depth: None, // lossy formats report no bit depth
+      channels: Some(2),
+      format: Some("MP3".to_string()),
+    };
+    upsert_track(&conn, &t).unwrap();
+    let (props, size) =
+      get_track_properties(&conn, "/m/a.mp3").unwrap().unwrap();
+    assert_eq!(props, t.props);
+    assert_eq!(size, 200);
+
+    // A row that predates these columns reads back a default (format == None),
+    // and update_track_properties backfills it without touching other columns.
+    upsert_track(&conn, &sample_track("/m/b.mp3")).unwrap();
+    let (empty, _) = get_track_properties(&conn, "/m/b.mp3").unwrap().unwrap();
+    assert_eq!(empty.format, None);
+    let backfilled = AudioProps {
+      duration_secs: Some(10),
+      bitrate_kbps: Some(1000),
+      sample_rate_hz: Some(48_000),
+      bit_depth: Some(24),
+      channels: Some(1),
+      format: Some("FLAC".to_string()),
+    };
+    update_track_properties(&conn, "/m/b.mp3", &backfilled).unwrap();
+    let (got, _) = get_track_properties(&conn, "/m/b.mp3").unwrap().unwrap();
+    assert_eq!(got, backfilled);
+
+    // Not-yet-scanned track → None.
+    assert_eq!(get_track_properties(&conn, "/m/missing.mp3").unwrap(), None);
   }
 
   #[test]

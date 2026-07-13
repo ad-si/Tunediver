@@ -788,6 +788,29 @@ input[type="search"] {
   display: none;
 }
 
+#songMeta {
+  margin: 12px 0 0 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  width: fit-content;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+#songMeta:empty {
+  display: none;
+}
+
+#songMeta dt {
+  font-weight: 600;
+}
+
+#songMeta dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 #songs a {
   display: block;
   border: 1px solid var(--border-songs-link);

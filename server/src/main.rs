@@ -270,6 +270,58 @@ fn read_cover(path: &Path) -> (bool, Option<Vec<u8>>, Option<String>) {
   (true, Some(picture.data().to_vec()), Some(mime.to_string()))
 }
 
+// Human-readable container/format name for a lofty `FileType`, falling back to
+// the uppercased file extension for anything lofty doesn't specifically name
+// (custom resolvers, future variants).
+fn format_name(file_type: FileType, path: &Path) -> Option<String> {
+  let name = match file_type {
+    FileType::Mpeg => "MP3",
+    FileType::Flac => "FLAC",
+    FileType::Mp4 => "MP4/M4A",
+    FileType::Aac => "AAC",
+    FileType::Opus => "Opus",
+    FileType::Vorbis => "Ogg Vorbis",
+    FileType::Speex => "Speex",
+    FileType::Wav => "WAV",
+    FileType::Aiff => "AIFF",
+    FileType::Ape => "APE",
+    FileType::WavPack => "WavPack",
+    FileType::Mpc => "Musepack",
+    _ => {
+      return path
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_uppercase())
+    }
+  };
+  Some(name.to_string())
+}
+
+// Read the technical stream properties (length, bitrate, sample rate, bit
+// depth, channel count, format) from the audio file itself. Called during a
+// scan and as a lazy backfill, so the per-request detail endpoint serves these
+// from the cache without reopening the (possibly slow) audio file. Returns an
+// all-`None` `AudioProps` if the file can't be parsed.
+fn read_audio_properties(path: &Path) -> db::AudioProps {
+  let tagged = match read_from_path(path) {
+    Ok(t) => t,
+    Err(_) => return db::AudioProps::default(),
+  };
+  let props = tagged.properties();
+  // A duration of zero means lofty couldn't determine one; report it as
+  // absent rather than a misleading "0:00".
+  let duration = props.duration().as_secs();
+  db::AudioProps {
+    duration_secs: (duration > 0).then_some(duration as i64),
+    bitrate_kbps: props.overall_bitrate().map(|b| b as i64),
+    sample_rate_hz: props.sample_rate().map(|s| s as i64),
+    bit_depth: props.bit_depth().map(|d| d as i64),
+    channels: props.channels().map(|c| c as i64),
+    format: format_name(tagged.file_type(), path),
+  }
+}
+
 // Default max age of a recorded full scan before a startup re-scan is forced.
 // The music is on slow removable storage and changes rarely, so a day bounds
 // staleness while sparing repeated restarts a redundant tree walk. Overridable
@@ -404,6 +456,7 @@ fn run_scan(
     let lyrics = read_track_lyrics(path);
     let date_added = read_id3v2_user_text(path, "DATE_ADDED");
     let (has_cover, cover_blob, cover_mime) = read_cover(path);
+    let props = read_audio_properties(path);
     let track = db::CachedTrack {
       path: path_str,
       mtime,
@@ -415,6 +468,7 @@ fn run_scan(
       has_cover,
       cover_blob,
       cover_mime,
+      props,
     };
     if let Err(e) = db::upsert_track(&conn, &track) {
       eprintln!("Scan: failed to cache {}: {}", track.path, e);
@@ -737,6 +791,22 @@ struct SingleSong {
   file_name: String,
   file_path: String,
   date_added: String,
+  // Technical audio properties. Absent (skipped) when unknown, so the frontend
+  // can omit the corresponding row rather than render a blank or "0".
+  #[serde(skip_serializing_if = "Option::is_none")]
+  duration_secs: Option<i64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  bitrate_kbps: Option<i64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  sample_rate_hz: Option<i64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  bit_depth: Option<i64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  channels: Option<i64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  format: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  file_size: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -837,15 +907,38 @@ fn get_song(
         .unwrap_or_else(|_| track.path.clone())
         .to_string_lossy()
         .into_owned();
-      // Lyrics and DATE_ADDED come from the cache, not a fresh file read.
+      // Lyrics, DATE_ADDED, and technical properties come from the cache, not a
+      // fresh file read. Properties for rows that predate the cache columns are
+      // backfilled lazily here: read from disk once, persist, then serve.
       let path_str = track.path.to_string_lossy().to_string();
-      let (lyrics, date_added) = match config.pool.get() {
-        Ok(conn) => db::get_track_detail(&conn, &path_str)
-          .ok()
-          .flatten()
-          .map(|(l, d)| (l.unwrap_or_default(), d.unwrap_or_default()))
-          .unwrap_or_default(),
-        Err(_) => (String::new(), String::new()),
+      let (lyrics, date_added, props, file_size) = match config.pool.get() {
+        Ok(conn) => {
+          let (lyrics, date_added) = db::get_track_detail(&conn, &path_str)
+            .ok()
+            .flatten()
+            .map(|(l, d)| (l.unwrap_or_default(), d.unwrap_or_default()))
+            .unwrap_or_default();
+          let (props, size) = db::get_track_properties(&conn, &path_str)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+          // `format == None` means the row predates these columns; probe the
+          // file once and cache the result so later views stay cache-served.
+          let props = if props.format.is_none() {
+            let fresh = read_audio_properties(&track.path);
+            let _ = db::update_track_properties(&conn, &path_str, &fresh);
+            fresh
+          } else {
+            props
+          };
+          (lyrics, date_added, props, Some(size))
+        }
+        Err(_) => (
+          String::new(),
+          String::new(),
+          db::AudioProps::default(),
+          None,
+        ),
       };
 
       Json(SingleSongResponse {
@@ -863,6 +956,15 @@ fn get_song(
           file_name,
           file_path,
           date_added,
+          duration_secs: props.duration_secs,
+          bitrate_kbps: props.bitrate_kbps,
+          sample_rate_hz: props.sample_rate_hz,
+          bit_depth: props.bit_depth,
+          channels: props.channels,
+          format: props.format,
+          // A cached size of 0 is a not-yet-stamped placeholder, not a real
+          // empty file; suppress it so the UI omits the row.
+          file_size: file_size.filter(|&s| s > 0),
         },
       })
     }
@@ -877,6 +979,13 @@ fn get_song(
         file_name: String::new(),
         file_path: String::new(),
         date_added: String::new(),
+        duration_secs: None,
+        bitrate_kbps: None,
+        sample_rate_hz: None,
+        bit_depth: None,
+        channels: None,
+        format: None,
+        file_size: None,
       },
     }),
   }
