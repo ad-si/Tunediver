@@ -135,8 +135,7 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   if column_exists(conn, "tracks", "artist")?
     && !column_exists(conn, "tracks", "artists")?
   {
-    conn
-      .execute("ALTER TABLE tracks RENAME COLUMN artist TO artists", [])?;
+    conn.execute("ALTER TABLE tracks RENAME COLUMN artist TO artists", [])?;
   }
   // Migrate databases created before `playlist_tracks.added_at` existed.
   // `CREATE TABLE IF NOT EXISTS` leaves an existing table untouched, so add the
@@ -225,8 +224,8 @@ pub fn load_track_stamps(
 pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
   // The credited artists are stored as a JSON array so the multi-artist list
   // round-trips without a delimiter that could collide with an artist name.
-  let artists_json = serde_json::to_string(&t.artists)
-    .unwrap_or_else(|_| "[]".to_string());
+  let artists_json =
+    serde_json::to_string(&t.artists).unwrap_or_else(|_| "[]".to_string());
   conn.execute(
     "INSERT INTO tracks
        (path, mtime, size, artists, title, lyrics, date_added, has_cover, cover_blob, cover_mime,
@@ -563,8 +562,7 @@ mod tests {
 
     // A multi-artist track round-trips through the JSON `artists` column.
     let mut t = sample_track("/m/collab.mp3");
-    t.artists =
-      vec!["Kenny Garrett".to_string(), "Brad Mehldau".to_string()];
+    t.artists = vec!["Kenny Garrett".to_string(), "Brad Mehldau".to_string()];
     upsert_track(&conn, &t).unwrap();
 
     // A row left behind by the pre-JSON schema: a single delimited string in
@@ -652,7 +650,10 @@ mod tests {
     a.size = 20;
     upsert_track(&conn, &a).unwrap();
     let stamps = load_track_stamps(&conn).unwrap();
-    assert_eq!(stamps.get("/m/a.mp3"), Some(&(10, 20, CURRENT_TAGS_VERSION)));
+    assert_eq!(
+      stamps.get("/m/a.mp3"),
+      Some(&(10, 20, CURRENT_TAGS_VERSION))
+    );
     assert_eq!(stamps.get("/m/missing.mp3"), None);
   }
 

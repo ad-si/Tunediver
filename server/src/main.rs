@@ -139,7 +139,10 @@ fn artist_credit(artists: &[String]) -> String {
 // slug. Falls back to "Unknown Artist" for the degenerate empty list, which
 // `read_track_tags`/`load_catalog` already guard against.
 fn primary_artist(artists: &[String]) -> &str {
-  artists.first().map(String::as_str).unwrap_or(UNKNOWN_ARTIST)
+  artists
+    .first()
+    .map(String::as_str)
+    .unwrap_or(UNKNOWN_ARTIST)
 }
 
 // Read the credited artists and title from the file's embedded tags. Each
@@ -151,7 +154,9 @@ fn primary_artist(artists: &[String]) -> &str {
 fn read_track_tags(path: &Path) -> (Vec<String>, String) {
   let tagged = match read_from_path(path) {
     Ok(t) => t,
-    Err(_) => return (vec![UNKNOWN_ARTIST.to_string()], UNKNOWN_TITLE.to_string()),
+    Err(_) => {
+      return (vec![UNKNOWN_ARTIST.to_string()], UNKNOWN_TITLE.to_string())
+    }
   };
 
   let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
@@ -166,7 +171,10 @@ fn read_track_tags(path: &Path) -> (Vec<String>, String) {
         .get_strings(lofty::tag::ItemKey::TrackArtist)
         .flat_map(split_artists)
         .collect();
-      (artists, t.title().map(|s| s.to_string()).unwrap_or_default())
+      (
+        artists,
+        t.title().map(|s| s.to_string()).unwrap_or_default(),
+      )
     }
     None => (Vec::new(), String::new()),
   };
@@ -1269,44 +1277,43 @@ fn summarize(
 }
 
 fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
-  let tracks = playlist
-    .tracks
-    .iter()
-    .map(|tr| {
-      match catalog
-        .tracks
-        .iter()
-        .find(|t| t.title == tr.title && artists_match(&t.artists, &tr.artist))
-      {
-        Some(t) => PlaylistTrack {
-          artist: tr.artist.clone(),
-          title: tr.title.clone(),
-          available: true,
-          slug: encode(&t.slug),
-          src: format!(
-            "/api/{}/{}",
-            encode(primary_artist(&t.artists)),
-            encode(&t.slug)
-          ),
-          artist_slug: encode(primary_artist(&t.artists)),
-          track_artist: artist_credit(&t.artists),
-          track_artists: t.artists.clone(),
-          added_at: tr.added_at.clone(),
-        },
-        None => PlaylistTrack {
-          artist: tr.artist.clone(),
-          title: tr.title.clone(),
-          available: false,
-          slug: String::new(),
-          src: String::new(),
-          artist_slug: encode(primary_artist(&split_artists(&tr.artist))),
-          track_artist: tr.artist.clone(),
-          track_artists: split_artists(&tr.artist),
-          added_at: tr.added_at.clone(),
-        },
-      }
-    })
-    .collect();
+  let tracks =
+    playlist
+      .tracks
+      .iter()
+      .map(|tr| {
+        match catalog.tracks.iter().find(|t| {
+          t.title == tr.title && artists_match(&t.artists, &tr.artist)
+        }) {
+          Some(t) => PlaylistTrack {
+            artist: tr.artist.clone(),
+            title: tr.title.clone(),
+            available: true,
+            slug: encode(&t.slug),
+            src: format!(
+              "/api/{}/{}",
+              encode(primary_artist(&t.artists)),
+              encode(&t.slug)
+            ),
+            artist_slug: encode(primary_artist(&t.artists)),
+            track_artist: artist_credit(&t.artists),
+            track_artists: t.artists.clone(),
+            added_at: tr.added_at.clone(),
+          },
+          None => PlaylistTrack {
+            artist: tr.artist.clone(),
+            title: tr.title.clone(),
+            available: false,
+            slug: String::new(),
+            src: String::new(),
+            artist_slug: encode(primary_artist(&split_artists(&tr.artist))),
+            track_artist: tr.artist.clone(),
+            track_artists: split_artists(&tr.artist),
+            added_at: tr.added_at.clone(),
+          },
+        }
+      })
+      .collect();
 
   PlaylistDetail {
     id: playlist.id.clone(),
@@ -1873,8 +1880,7 @@ mod tests {
 
   #[test]
   fn artists_match_full_credit_and_each_participant() {
-    let artists =
-      vec!["Bobby McFerrin".to_string(), "Chick Corea".to_string()];
+    let artists = vec!["Bobby McFerrin".to_string(), "Chick Corea".to_string()];
     // The credit line the track itself produces ("A, B"), as a playlist ref
     // added from `track_artist` would carry it.
     assert_eq!(artist_credit(&artists), "Bobby McFerrin, Chick Corea");
