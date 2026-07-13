@@ -32,7 +32,11 @@ const UNKNOWN_TITLE: &str = "Unknown Title";
 #[derive(Debug, Clone)]
 struct Track {
   id: usize,
-  artist: String,
+  // Every credited artist as its own entry. Multi-artist files store their
+  // collaborators either as separate ARTIST tag fields or as one delimited
+  // string; both are resolved to this list at read time (see read_track_tags),
+  // so the rest of the app never has to re-split a credit string.
+  artists: Vec<String>,
   title: String,
   path: PathBuf,
   // URL slug key that `find_track` resolves back to this track. Normally the
@@ -102,47 +106,87 @@ fn split_artists(artist: &str) -> Vec<String> {
     .collect()
 }
 
-// Whether a track's (possibly multi-artist) artist string belongs to
-// `query`. Matches the full string verbatim — so links built from the
-// original credit keep resolving — or any single split-out artist, which
-// is what makes a collaboration reachable from each participant's page.
-fn artist_matches(full: &str, query: &str) -> bool {
-  full == query || split_artists(full).iter().any(|a| a == query)
+// Whether a track (described by its list of individual artists) belongs to
+// `query`. Matches when `query` is one of the participants — what makes a
+// collaboration reachable from each artist's page — or when `query` is a
+// full credit string (any recognized separator) naming exactly this set, so
+// links built from an original delimited credit keep resolving.
+fn artists_match(artists: &[String], query: &str) -> bool {
+  if artists.iter().any(|a| a == query) {
+    return true;
+  }
+  // The exact credit line this track produces ("A, B"), e.g. a playlist ref
+  // added from `track_artist`. Checked directly because `split_artists` never
+  // treats a comma as a separator, so it can't reconstruct this form.
+  if artist_credit(artists) == query {
+    return true;
+  }
+  // A credit delimited the older way (" / " or ";"), e.g. a legacy playlist
+  // ref or a bookmarked URL, naming exactly this set.
+  let parts = split_artists(query);
+  parts.len() > 1 && parts == artists
 }
 
-// Read artist and title from the file's embedded tags. Falls back to
-// "Unknown Artist" / "Unknown Title" when tags are missing or unreadable;
+// A single, human-readable credit line for a track's artists. Also serves as
+// the stable identity a playlist track ref is keyed by. Uses ", " because it
+// reads naturally and `split_artists` never treats a comma as a separator (so
+// names like "Grover Washington, Jr." survive intact).
+fn artist_credit(artists: &[String]) -> String {
+  artists.join(", ")
+}
+
+// The primary (first-credited) artist, used for a track's canonical URL and
+// slug. Falls back to "Unknown Artist" for the degenerate empty list, which
+// `read_track_tags`/`load_catalog` already guard against.
+fn primary_artist(artists: &[String]) -> &str {
+  artists.first().map(String::as_str).unwrap_or(UNKNOWN_ARTIST)
+}
+
+// Read the credited artists and title from the file's embedded tags. Each
+// ARTIST field is split on the recognized separators and the results are
+// flattened, so a file that stores collaborators as separate fields *or* as
+// one delimited string both yield the same fully-resolved list. Falls back to
+// ["Unknown Artist"] / "Unknown Title" when tags are missing or unreadable;
 // never consults the filename or directory name.
-fn read_track_tags(path: &Path) -> (String, String) {
+fn read_track_tags(path: &Path) -> (Vec<String>, String) {
   let tagged = match read_from_path(path) {
     Ok(t) => t,
-    Err(_) => return (UNKNOWN_ARTIST.to_string(), UNKNOWN_TITLE.to_string()),
+    Err(_) => return (vec![UNKNOWN_ARTIST.to_string()], UNKNOWN_TITLE.to_string()),
   };
 
   let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-  let (artist, title) = match tag {
-    Some(t) => (
-      t.artist().map(|s| s.to_string()).unwrap_or_default(),
-      t.title().map(|s| s.to_string()).unwrap_or_default(),
-    ),
-    None => (String::new(), String::new()),
+  let (artists, title) = match tag {
+    Some(t) => {
+      // `Accessor::artist()` yields only the first ARTIST value, silently
+      // dropping the rest on files (notably Opus/Vorbis comments) that store
+      // each collaborator in its own field. Collect every value instead, then
+      // split each on the recognized separators so single-field delimited
+      // credits resolve the same way. `split_artists` trims and drops empties.
+      let artists: Vec<String> = t
+        .get_strings(lofty::tag::ItemKey::TrackArtist)
+        .flat_map(split_artists)
+        .collect();
+      (artists, t.title().map(|s| s.to_string()).unwrap_or_default())
+    }
+    None => (Vec::new(), String::new()),
   };
 
-  // Trim stray whitespace from tag values — some files in the wild ship
-  // with leading/trailing spaces in `TPE1`/`TIT2` frames, which would
-  // otherwise prevent (artist, title)-based lookups (e.g. playlist track
-  // refs) from matching the catalog entry.
-  let artist = if artist.trim().is_empty() {
-    UNKNOWN_ARTIST.to_string()
+  // An empty list (no/blank ARTIST tags) falls back to the placeholder so the
+  // track still surfaces under a stable identity.
+  let artists = if artists.is_empty() {
+    vec![UNKNOWN_ARTIST.to_string()]
   } else {
-    artist.trim().to_string()
+    artists
   };
+  // Trim stray whitespace from the title — some files ship with leading or
+  // trailing spaces in the `TIT2`/title frame, which would otherwise prevent
+  // (artist, title)-based lookups (e.g. playlist track refs) from matching.
   let title = if title.trim().is_empty() {
     UNKNOWN_TITLE.to_string()
   } else {
     title.trim().to_string()
   };
-  (artist, title)
+  (artists, title)
 }
 
 // Look up lyrics from whichever tag the file carries, if any.
@@ -445,14 +489,17 @@ fn run_scan(
     let (mtime, size) = file_stamp(path);
     seen.insert(path_str.clone());
 
-    // Skip files that are unchanged since the last scan.
-    if let Some((m, s)) = existing.get(&path_str) {
-      if *m == mtime && *s == size {
+    // Skip files that are unchanged since the last scan — but only if they
+    // were also read by the current tag-reading version. A stale `tags_v`
+    // forces a re-read even when mtime/size match, so a logic improvement
+    // (e.g. multi-artist parsing) heals older cached rows.
+    if let Some((m, s, tags_v)) = existing.get(&path_str) {
+      if *m == mtime && *s == size && *tags_v >= db::CURRENT_TAGS_VERSION {
         continue;
       }
     }
 
-    let (artist, title) = read_track_tags(path);
+    let (artists, title) = read_track_tags(path);
     let lyrics = read_track_lyrics(path);
     let date_added = read_id3v2_user_text(path, "DATE_ADDED");
     let (has_cover, cover_blob, cover_mime) = read_cover(path);
@@ -461,7 +508,7 @@ fn run_scan(
       path: path_str,
       mtime,
       size,
-      artist,
+      artists,
       title,
       lyrics,
       date_added,
@@ -530,8 +577,8 @@ impl Catalog {
   fn list_artists(&self) -> Vec<Artist> {
     let mut names: BTreeSet<String> = BTreeSet::new();
     for track in &self.tracks {
-      for name in split_artists(&track.artist) {
-        names.insert(name);
+      for name in &track.artists {
+        names.insert(name.clone());
       }
     }
     names
@@ -550,7 +597,7 @@ impl Catalog {
     self
       .tracks
       .iter()
-      .filter(|t| artist_matches(&t.artist, artist))
+      .filter(|t| artists_match(&t.artists, artist))
       .collect()
   }
 
@@ -564,7 +611,7 @@ impl Catalog {
     self
       .tracks
       .iter()
-      .find(|t| t.slug == decoded && artist_matches(&t.artist, artist))
+      .find(|t| t.slug == decoded && artists_match(&t.artists, artist))
   }
 }
 
@@ -719,12 +766,12 @@ fn assign_track_slugs(tracks: &mut [Track]) {
   let mut counts: HashMap<(String, String), usize> = HashMap::new();
   for t in tracks.iter() {
     *counts
-      .entry((t.artist.clone(), t.title.clone()))
+      .entry((artist_credit(&t.artists), t.title.clone()))
       .or_insert(0) += 1;
   }
   for t in tracks.iter_mut() {
     let ambiguous = counts
-      .get(&(t.artist.clone(), t.title.clone()))
+      .get(&(artist_credit(&t.artists), t.title.clone()))
       .copied()
       .unwrap_or(1)
       > 1;
@@ -737,13 +784,15 @@ fn assign_track_slugs(tracks: &mut [Track]) {
 }
 
 fn track_to_song(track: &Track) -> Song {
+  let primary = primary_artist(&track.artists);
   Song {
     id: track.id,
     title: track.title.clone(),
     slug: encode(&track.slug),
-    src: format!("/api/{}/{}", encode(&track.artist), encode(&track.slug)),
-    track_artist: track.artist.clone(),
-    artist_slug: encode(&track.artist),
+    src: format!("/api/{}/{}", encode(primary), encode(&track.slug)),
+    track_artist: artist_credit(&track.artists),
+    track_artists: track.artists.clone(),
+    artist_slug: encode(primary),
   }
 }
 
@@ -769,7 +818,12 @@ struct Song {
   title: String,
   slug: String,
   src: String,
+  // A single, ready-to-display credit line ("A, B, C"); also the identity a
+  // playlist track ref is keyed by.
   track_artist: String,
+  // The individual credited artists, so the UI can render one link per artist.
+  track_artists: Vec<String>,
+  // Slug of the primary (first-credited) artist — the track's canonical URL.
   artist_slug: String,
 }
 
@@ -786,6 +840,7 @@ struct SingleSong {
   title: String,
   slug: String,
   track_artist: String,
+  track_artists: Vec<String>,
   lyrics: String,
   src: String,
   file_name: String,
@@ -946,11 +1001,12 @@ fn get_song(
           id: track.id,
           title: track.title.clone(),
           slug: encode(&track.slug),
-          track_artist: track.artist.clone(),
+          track_artist: artist_credit(&track.artists),
+          track_artists: track.artists.clone(),
           lyrics,
           src: format!(
             "/api/{}/{}",
-            encode(&track.artist),
+            encode(primary_artist(&track.artists)),
             encode(&track.slug)
           ),
           file_name,
@@ -973,6 +1029,7 @@ fn get_song(
         id: 0,
         title: song.to_string(),
         slug: song.to_string(),
+        track_artists: vec![decoded_artist.clone()],
         track_artist: decoded_artist,
         lyrics: String::new(),
         src: String::new(),
@@ -1148,6 +1205,8 @@ struct PlaylistTrack {
   src: String,
   artist_slug: String,
   track_artist: String,
+  // The individual credited artists, so the UI can render one link per artist.
+  track_artists: Vec<String>,
   // ISO 8601 timestamp of when the track was added to the playlist, or `None`.
   added_at: Option<String>,
 }
@@ -1217,16 +1276,21 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
       match catalog
         .tracks
         .iter()
-        .find(|t| t.artist == tr.artist && t.title == tr.title)
+        .find(|t| t.title == tr.title && artists_match(&t.artists, &tr.artist))
       {
         Some(t) => PlaylistTrack {
           artist: tr.artist.clone(),
           title: tr.title.clone(),
           available: true,
           slug: encode(&t.slug),
-          src: format!("/api/{}/{}", encode(&t.artist), encode(&t.slug)),
-          artist_slug: encode(&t.artist),
-          track_artist: t.artist.clone(),
+          src: format!(
+            "/api/{}/{}",
+            encode(primary_artist(&t.artists)),
+            encode(&t.slug)
+          ),
+          artist_slug: encode(primary_artist(&t.artists)),
+          track_artist: artist_credit(&t.artists),
+          track_artists: t.artists.clone(),
           added_at: tr.added_at.clone(),
         },
         None => PlaylistTrack {
@@ -1235,8 +1299,9 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
           available: false,
           slug: String::new(),
           src: String::new(),
-          artist_slug: encode(&tr.artist),
+          artist_slug: encode(primary_artist(&split_artists(&tr.artist))),
           track_artist: tr.artist.clone(),
+          track_artists: split_artists(&tr.artist),
           added_at: tr.added_at.clone(),
         },
       }
@@ -1807,19 +1872,39 @@ mod tests {
   }
 
   #[test]
-  fn artist_matches_full_string_and_each_participant() {
-    let full = "Bobby McFerrin / Chick Corea";
-    assert!(artist_matches(full, full)); // verbatim (link from credit)
-    assert!(artist_matches(full, "Bobby McFerrin")); // participant
-    assert!(artist_matches(full, "Chick Corea")); // participant
-    assert!(!artist_matches(full, "Herbie Hancock"));
+  fn artists_match_full_credit_and_each_participant() {
+    let artists =
+      vec!["Bobby McFerrin".to_string(), "Chick Corea".to_string()];
+    // The credit line the track itself produces ("A, B"), as a playlist ref
+    // added from `track_artist` would carry it.
+    assert_eq!(artist_credit(&artists), "Bobby McFerrin, Chick Corea");
+    assert!(artists_match(&artists, "Bobby McFerrin, Chick Corea"));
+    // A delimited full credit (older separators) naming this exact set.
+    assert!(artists_match(&artists, "Bobby McFerrin / Chick Corea"));
+    assert!(artists_match(&artists, "Bobby McFerrin; Chick Corea"));
+    // Each participant on its own.
+    assert!(artists_match(&artists, "Bobby McFerrin"));
+    assert!(artists_match(&artists, "Chick Corea"));
+    assert!(!artists_match(&artists, "Herbie Hancock"));
+    // A credit naming a different set does not match.
+    assert!(!artists_match(&artists, "Bobby McFerrin / Herbie Hancock"));
+  }
+
+  #[test]
+  fn read_track_tags_returns_unknown_artist_for_unreadable_file() {
+    // A path that can't be parsed as audio falls back to the placeholders
+    // rather than borrowing identity from the filename.
+    let (artists, title) =
+      read_track_tags(Path::new("/nonexistent/not-audio.mp3"));
+    assert_eq!(artists, vec!["Unknown Artist".to_string()]);
+    assert_eq!(title, "Unknown Title");
   }
 
   #[test]
   fn slugs_disambiguate_only_colliding_artist_title() {
     let track = |id, artist: &str, title: &str, path: &str| Track {
       id,
-      artist: artist.to_string(),
+      artists: split_artists(artist),
       title: title.to_string(),
       path: PathBuf::from(path),
       slug: String::new(),
@@ -1860,7 +1945,7 @@ mod tests {
   fn catalog_unifies_artists_across_collaborations() {
     let track = |id, artist: &str| Track {
       id,
-      artist: artist.to_string(),
+      artists: split_artists(artist),
       title: format!("Song {}", id),
       path: PathBuf::from(format!("/{}.mp3", id)),
       slug: format!("Song {}", id),

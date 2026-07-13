@@ -43,7 +43,9 @@ pub struct CachedTrack {
   pub path: String,
   pub mtime: i64,
   pub size: i64,
-  pub artist: String,
+  // Every credited artist as its own entry, stored as a JSON array in the
+  // `artists` column. Files with a single artist yield a one-element list.
+  pub artists: Vec<String>,
   pub title: String,
   pub lyrics: Option<String>,
   pub date_added: Option<String>,
@@ -54,6 +56,14 @@ pub struct CachedTrack {
 }
 
 const SCHEMA_VERSION: i64 = 1;
+
+// Version of the tag-reading logic. Every cached row records the version that
+// produced it (`tracks.tags_v`); the scan re-reads any file whose stored
+// version is older, independent of whether its mtime/size changed. Bump this
+// whenever `read_track_tags` starts extracting something it previously missed
+// so existing caches heal on the next scan. v1 introduced multi-artist parsing
+// (multiple ARTIST fields were previously truncated to the first artist).
+pub const CURRENT_TAGS_VERSION: i64 = 1;
 
 // Open (creating if needed) a pooled connection to the cache database. WAL
 // mode lets readers (cover/detail endpoints) proceed while the background
@@ -86,7 +96,7 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        path       TEXT PRIMARY KEY,
        mtime      INTEGER NOT NULL,
        size       INTEGER NOT NULL,
-       artist     TEXT NOT NULL,
+       artists    TEXT NOT NULL,
        title      TEXT NOT NULL,
        lyrics     TEXT,
        date_added TEXT,
@@ -98,7 +108,8 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        sample_rate_hz  INTEGER,
        bit_depth       INTEGER,
        channels        INTEGER,
-       format          TEXT
+       format          TEXT,
+       tags_v          INTEGER
      );
      CREATE TABLE IF NOT EXISTS playlists (
        id         TEXT PRIMARY KEY,
@@ -117,6 +128,16 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
      );
      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);",
   )?;
+  // Migrate databases created before `tracks.artist` became the JSON-array
+  // `tracks.artists`. The rename preserves the old single-string values in
+  // place; `load_catalog` parses them via a `split_artists` fallback, and a
+  // subsequent rescan rewrites each row as a proper JSON array.
+  if column_exists(conn, "tracks", "artist")?
+    && !column_exists(conn, "tracks", "artists")?
+  {
+    conn
+      .execute("ALTER TABLE tracks RENAME COLUMN artist TO artists", [])?;
+  }
   // Migrate databases created before `playlist_tracks.added_at` existed.
   // `CREATE TABLE IF NOT EXISTS` leaves an existing table untouched, so add the
   // column explicitly; ignore the error raised when it is already present.
@@ -126,6 +147,9 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   // Migrate databases created before the technical audio-property columns
   // existed. Existing rows get NULLs, which the detail endpoint backfills on
   // first view (see `get_track_properties`).
+  // `tags_v` records which tag-reading version produced each row (see
+  // CURRENT_TAGS_VERSION); existing rows default to NULL, which reads as older
+  // than any version and so triggers a one-time re-read on the next scan.
   for (column, ty) in [
     ("duration_secs", "INTEGER"),
     ("bitrate_kbps", "INTEGER"),
@@ -133,6 +157,7 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
     ("bit_depth", "INTEGER"),
     ("channels", "INTEGER"),
     ("format", "TEXT"),
+    ("tags_v", "INTEGER"),
   ] {
     if !column_exists(conn, "tracks", column)? {
       conn
@@ -166,16 +191,27 @@ fn column_exists(
 
 // Track cache -----------------------------------------------------------------
 
-// Path -> (mtime, size) for every cached track, used by the scan to decide
-// which files changed.
+// Path -> (mtime, size, tags_v) for every cached track, used by the scan to
+// decide which files to re-read. A row is re-read when its mtime/size changed
+// *or* its `tags_v` is older than CURRENT_TAGS_VERSION (NULL, from a row that
+// predates the column, reads as 0 — older than any version). `TagStamp` gives
+// these three the same name at both ends.
+pub type TagStamp = (i64, i64, i64);
+
 pub fn load_track_stamps(
   conn: &Conn,
-) -> rusqlite::Result<HashMap<String, (i64, i64)>> {
-  let mut stmt = conn.prepare("SELECT path, mtime, size FROM tracks")?;
+) -> rusqlite::Result<HashMap<String, TagStamp>> {
+  let mut stmt =
+    conn.prepare("SELECT path, mtime, size, tags_v FROM tracks")?;
   let rows = stmt.query_map([], |r| {
     Ok((
       r.get::<_, String>(0)?,
-      (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?),
+      (
+        r.get::<_, i64>(1)?,
+        r.get::<_, i64>(2)?,
+        // NULL (pre-column rows) → 0, which is older than CURRENT_TAGS_VERSION.
+        r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+      ),
     ))
   })?;
   let mut map = HashMap::new();
@@ -187,23 +223,28 @@ pub fn load_track_stamps(
 }
 
 pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
+  // The credited artists are stored as a JSON array so the multi-artist list
+  // round-trips without a delimiter that could collide with an artist name.
+  let artists_json = serde_json::to_string(&t.artists)
+    .unwrap_or_else(|_| "[]".to_string());
   conn.execute(
     "INSERT INTO tracks
-       (path, mtime, size, artist, title, lyrics, date_added, has_cover, cover_blob, cover_mime,
-        duration_secs, bitrate_kbps, sample_rate_hz, bit_depth, channels, format)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+       (path, mtime, size, artists, title, lyrics, date_added, has_cover, cover_blob, cover_mime,
+        duration_secs, bitrate_kbps, sample_rate_hz, bit_depth, channels, format, tags_v)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
      ON CONFLICT(path) DO UPDATE SET
-       mtime=excluded.mtime, size=excluded.size, artist=excluded.artist,
+       mtime=excluded.mtime, size=excluded.size, artists=excluded.artists,
        title=excluded.title, lyrics=excluded.lyrics, date_added=excluded.date_added,
        has_cover=excluded.has_cover, cover_blob=excluded.cover_blob,
        cover_mime=excluded.cover_mime, duration_secs=excluded.duration_secs,
        bitrate_kbps=excluded.bitrate_kbps, sample_rate_hz=excluded.sample_rate_hz,
-       bit_depth=excluded.bit_depth, channels=excluded.channels, format=excluded.format",
+       bit_depth=excluded.bit_depth, channels=excluded.channels, format=excluded.format,
+       tags_v=excluded.tags_v",
     params![
       t.path,
       t.mtime,
       t.size,
-      t.artist,
+      artists_json,
       t.title,
       t.lyrics,
       t.date_added,
@@ -216,6 +257,7 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
       t.props.bit_depth,
       t.props.channels,
       t.props.format,
+      CURRENT_TAGS_VERSION,
     ],
   )?;
   Ok(())
@@ -250,7 +292,7 @@ pub fn set_meta(conn: &Conn, key: &str, value: &str) -> rusqlite::Result<()> {
 // `build_catalog` behavior.
 pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
   let mut stmt =
-    conn.prepare("SELECT artist, title, path FROM tracks ORDER BY path")?;
+    conn.prepare("SELECT artists, title, path FROM tracks ORDER BY path")?;
   let rows = stmt.query_map([], |r| {
     Ok((
       r.get::<_, String>(0)?,
@@ -260,10 +302,18 @@ pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
   })?;
   let mut tracks = Vec::new();
   for (id, row) in rows.enumerate() {
-    let (artist, title, path) = row?;
+    let (artists_raw, title, path) = row?;
+    // Fresh rows hold a JSON array; rows migrated from the old single-string
+    // `artist` column are parsed with the same separator logic used at read
+    // time. Either way, never leave the list empty.
+    let mut artists = serde_json::from_str::<Vec<String>>(&artists_raw)
+      .unwrap_or_else(|_| crate::split_artists(&artists_raw));
+    if artists.is_empty() {
+      artists.push(crate::UNKNOWN_ARTIST.to_string());
+    }
     tracks.push(crate::Track {
       id,
-      artist,
+      artists,
       title,
       path: PathBuf::from(path),
       // Filled in by `assign_track_slugs` below, once all tracks are loaded
@@ -471,7 +521,7 @@ mod tests {
       path: path.to_string(),
       mtime: 100,
       size: 200,
-      artist: "Artist".to_string(),
+      artists: vec!["Artist".to_string()],
       title: "Title".to_string(),
       lyrics: None,
       date_added: None,
@@ -507,6 +557,72 @@ mod tests {
   }
 
   #[test]
+  fn artists_round_trip_as_json_and_legacy_string_falls_back() {
+    let pool = temp_pool("artists_json");
+    let conn = pool.get().unwrap();
+
+    // A multi-artist track round-trips through the JSON `artists` column.
+    let mut t = sample_track("/m/collab.mp3");
+    t.artists =
+      vec!["Kenny Garrett".to_string(), "Brad Mehldau".to_string()];
+    upsert_track(&conn, &t).unwrap();
+
+    // A row left behind by the pre-JSON schema: a single delimited string in
+    // the (now renamed) column. load_catalog must split it via the fallback.
+    conn
+      .execute(
+        "INSERT INTO tracks (path, mtime, size, artists, title)
+         VALUES ('/m/legacy.mp3', 1, 2, 'Bobby McFerrin / Chick Corea', 'X')",
+        [],
+      )
+      .unwrap();
+
+    let catalog = load_catalog(&conn).unwrap();
+    let by_path = |p: &str| {
+      catalog
+        .tracks
+        .iter()
+        .find(|t| t.path.to_string_lossy() == p)
+        .unwrap()
+    };
+    assert_eq!(
+      by_path("/m/collab.mp3").artists,
+      vec!["Kenny Garrett".to_string(), "Brad Mehldau".to_string()]
+    );
+    assert_eq!(
+      by_path("/m/legacy.mp3").artists,
+      vec!["Bobby McFerrin".to_string(), "Chick Corea".to_string()]
+    );
+  }
+
+  #[test]
+  fn stale_tags_version_flags_row_for_reread() {
+    let pool = temp_pool("tags_v");
+    let conn = pool.get().unwrap();
+
+    // A freshly upserted row records the current tag-reading version.
+    upsert_track(&conn, &sample_track("/m/fresh.mp3")).unwrap();
+    // A row left by the pre-`tags_v` schema: NULL version, which must read
+    // back as 0 (older than any version) so the scan re-reads it.
+    conn
+      .execute(
+        "INSERT INTO tracks (path, mtime, size, artists, title)
+         VALUES ('/m/legacy.mp3', 5, 6, '[\"A\"]', 'T')",
+        [],
+      )
+      .unwrap();
+
+    let stamps = load_track_stamps(&conn).unwrap();
+    assert_eq!(
+      stamps.get("/m/fresh.mp3"),
+      Some(&(100, 200, CURRENT_TAGS_VERSION))
+    );
+    // Legacy row: stamps preserved, version reads as 0 → re-read next scan.
+    assert_eq!(stamps.get("/m/legacy.mp3"), Some(&(5, 6, 0)));
+    assert!(0 < CURRENT_TAGS_VERSION);
+  }
+
+  #[test]
   fn upsert_replaces_existing_row_by_path() {
     let pool = temp_pool("upsert_replace");
     let conn = pool.get().unwrap();
@@ -521,7 +637,10 @@ mod tests {
     assert_eq!(catalog.tracks[0].title, "New Title");
 
     let stamps = load_track_stamps(&conn).unwrap();
-    assert_eq!(stamps.get("/m/song.mp3"), Some(&(999, 200)));
+    assert_eq!(
+      stamps.get("/m/song.mp3"),
+      Some(&(999, 200, CURRENT_TAGS_VERSION))
+    );
   }
 
   #[test]
@@ -533,7 +652,7 @@ mod tests {
     a.size = 20;
     upsert_track(&conn, &a).unwrap();
     let stamps = load_track_stamps(&conn).unwrap();
-    assert_eq!(stamps.get("/m/a.mp3"), Some(&(10, 20)));
+    assert_eq!(stamps.get("/m/a.mp3"), Some(&(10, 20, CURRENT_TAGS_VERSION)));
     assert_eq!(stamps.get("/m/missing.mp3"), None);
   }
 

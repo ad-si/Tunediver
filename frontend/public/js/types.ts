@@ -4,7 +4,10 @@ type Song = {
   title: string
   slug: string
   src: string
+  // A single, display-ready credit line ("A, B, C").
   track_artist?: string
+  // The individual credited artists, for rendering one link per artist.
+  track_artists?: string[]
   artist_slug?: string
   lyrics?: string
   file_name?: string
@@ -66,6 +69,8 @@ type PlaylistTrack = {
   src: string
   artist_slug: string
   track_artist: string
+  // The individual credited artists, for rendering one link per artist.
+  track_artists?: string[]
   // ISO 8601 timestamp of when the track was added to the playlist, if known.
   added_at?: string
 }

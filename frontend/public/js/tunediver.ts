@@ -1218,6 +1218,27 @@ function lyricsNode(song: Song, artistSlug: string): any[] {
   return node
 }
 
+// Build the song-detail artist credit as one link per credited artist,
+// separated by ", ". Each link routes to that artist's page. Falls back to a
+// single link built from the URL's artist slug when the server didn't supply
+// the per-artist list (e.g. an older response or the not-found placeholder).
+function trackArtistNode(song: Song, fallbackSlug: string): any[] {
+  const node: any[] = ["p#trackArtist"]
+  const hasList = !!(song.track_artists && song.track_artists.length)
+  const names = hasList
+    ? (song.track_artists as string[])
+    : [song.track_artist || ""]
+  names.forEach((name, i) => {
+    const slug = hasList ? encodeURIComponent(name) : fallbackSlug
+    if (i > 0) node.push(", ")
+    node.push(["a.trackArtistLink", {
+      "href": baseURL + "/" + artistPath(slug),
+      "data-artist-slug": slug,
+    }, name])
+  })
+  return node
+}
+
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
@@ -1440,11 +1461,7 @@ const printObj = {
               "alt": "Image of " + (songData.track_artist || ""),
             }],
             ["nav#songNav",
-              ["p#trackArtist",
-                ["a#trackArtistLink",
-                  { "href": baseURL + "/" + artistPath(artistSlug) },
-                  songData.track_artist || ""],
-              ],
+              trackArtistNode(songData, artistSlug),
               ["h2#heading", songData.title],
               ["p#dateAdded",
                 songData.date_added
@@ -1476,13 +1493,16 @@ const printObj = {
       container.onclick = (e: MouseEvent) => {
         let target = e.target as HTMLElement
 
-        // The artist name links to the artist's page; route in-app rather than
-        // following the anchor's href so it stays a single-page navigation.
-        if (target.id === "trackArtistLink") {
+        // Each artist name links to that artist's page; route in-app rather
+        // than following the anchor's href so it stays a single-page
+        // navigation. The clicked link carries its own slug so a multi-artist
+        // credit routes to whichever name was clicked.
+        if (target.classList.contains("trackArtistLink")) {
           e.preventDefault()
           e.stopPropagation()
-          const url = artistPath(artistSlug)
-          history.pushState({ "url": url }, artistSlug, baseURL + "/" + url)
+          const slug = target.getAttribute("data-artist-slug") || artistSlug
+          const url = artistPath(slug)
+          history.pushState({ "url": url }, slug, baseURL + "/" + url)
           route(url)
           return false
         }
