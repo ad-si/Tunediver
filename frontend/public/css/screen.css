@@ -768,6 +768,13 @@ input[type="search"] {
   line-height: 1.2;
 }
 
+/* Artist name sits above the song title as an eyebrow label. */
+#trackArtist {
+  margin: 0 0 2px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 #trackArtist a {
   cursor: pointer;
   color: inherit;

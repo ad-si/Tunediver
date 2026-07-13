@@ -1365,12 +1365,12 @@ const printObj = {
               "alt": "Image of " + (songData.track_artist || ""),
             }],
             ["nav#songNav",
-              ["h2#heading", songData.title],
               ["p#trackArtist",
                 ["a#trackArtistLink",
                   { "href": baseURL + "/" + artistPath(artistSlug) },
                   songData.track_artist || ""],
               ],
+              ["h2#heading", songData.title],
               ["p#dateAdded",
                 songData.date_added
                   ? "Added " + songData.date_added
