@@ -1368,11 +1368,13 @@ const printObj = {
 
       updatePlayingMarkers()
 
-      // Use event delegation on the container instead of individual handlers
+      // Use event delegation on the container instead of individual handlers.
+      // Property-assigned so every render replaces the previous handler
+      // instead of stacking another one on the container.
       const container = $("c3")
 
       // Handle double-clicks on song divs
-      container.addEventListener("dblclick", (e) => {
+      container.ondblclick = (e) => {
         let target = e.target as HTMLElement
         const songDiv = target.closest(".row") as HTMLElement
 
@@ -1387,10 +1389,10 @@ const printObj = {
           }
           return false
         }
-      })
+      }
 
       // Handle clicks on play buttons
-      container.addEventListener("click", (e) => {
+      container.onclick = (e) => {
         let target = e.target as HTMLElement
         if (target.classList.contains("play")) {
           e.preventDefault()
@@ -1431,7 +1433,7 @@ const printObj = {
           }
           return false
         }
-      })
+      }
     })
   },
 
@@ -1610,9 +1612,12 @@ const printObj = {
 
       updatePlayingMarkers()
 
+      // Property-assigned so every render replaces the previous handler
+      // instead of stacking another one on the container (the search view
+      // assigns its own delegated handlers to c2 the same way).
       const container = $("c2")
 
-      container.addEventListener("dblclick", (e) => {
+      container.ondblclick = (e) => {
         const target = e.target as HTMLElement
         const songDiv = target.closest(".row") as HTMLElement | null
         if (!songDiv || !songDiv.hasAttribute("data-song-id")) return
@@ -1623,9 +1628,9 @@ const printObj = {
           const { song, artist } = songRegistry[songId]
           playSong(song, artist, false)
         }
-      })
+      }
 
-      container.addEventListener("click", (e) => {
+      container.onclick = (e) => {
         const target = e.target as HTMLElement
 
         if (target.classList.contains("play")) {
@@ -1654,7 +1659,7 @@ const printObj = {
             history.pushState({"url": url}, song.slug, baseURL + "/" + url)
           }
         }
-      })
+      }
     })
   },
 
