@@ -116,44 +116,417 @@ function updatePlayingMarkers(): void {
     .forEach((row) => row.classList.add("playing"))
 }
 
-// Simple fuzzy match: checks whether all characters of the query appear
-// in order within the target string (case-insensitive).
-function fuzzyMatch(query: string, target: string): boolean {
-  const q = query.toLowerCase()
-  const t = target.toLowerCase()
-  let qi = 0
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) qi++
-  }
-  return qi === q.length
+// --- Global fuzzy search ---------------------------------------------------
+
+// Catalog data backing the global search, fetched once when a search session
+// starts (first keystroke) and reused while the user types. Invalidated when
+// the query is cleared, a library scan finishes, or playlists are mutated,
+// so the next search sees fresh data.
+let searchCatalog: {
+  artists: Artist[]
+  songs: Song[]
+  playlists: PlaylistSummary[]
+} | null = null
+let searchCatalogLoading = false
+
+function invalidateSearchCatalog(): void {
+  searchCatalog = null
 }
 
-// Filter visible rows in c2 and c3 based on the current search query.
-// Each row is matched against its text content and relevant data attributes.
-function filterRows(query: string): void {
-  const q = query.trim()
+// Last query handleSearchInput acted on, so keyup events that didn't change
+// the value (arrow keys, modifiers) don't re-render or re-route.
+let lastSearchQuery = ""
 
-  const filter = (container: HTMLElement) => {
-    const rows = container.querySelectorAll(".row")
-    rows.forEach((row) => {
-      const el = row as HTMLElement
-      if (!q) {
-        el.style.display = ""
-        return
+// How many hits each category section shows at most.
+const SEARCH_LIMITS = { artists: 8, songs: 20, playlists: 8 }
+
+function isWordChar(ch: string): boolean {
+  return /[a-z0-9]/i.test(ch)
+}
+
+// Score how well the (lowercased) query matches the (lowercased) target, as
+// a fraction in (0, 1] where 1 is a perfect match, or null when the query's
+// characters don't all appear in order. Substring hits (≥ 0.6) always
+// outrank scattered subsequence hits (≤ 0.6); within each kind, matches at
+// the start of the string or of a word outrank mid-word ones, and queries
+// covering more of the target outrank ones that leave most of it unmatched.
+function fuzzyScoreSingle(q: string, t: string): number | null {
+  const idx = t.indexOf(q)
+  if (idx !== -1) {
+    const positionBonus = idx === 0
+      ? 0.15
+      : !isWordChar(t[idx - 1]) ? 0.1 : 0.05
+    return 0.6 + 0.25 * (q.length / t.length) + positionBonus
+  }
+
+  // Subsequence match: all query characters appear in order, but scattered.
+  // Favour runs of adjacent characters and characters landing on word starts.
+  let qi = 0
+  let adjacent = 0
+  let wordStarts = 0
+  let prev = -2
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] !== q[qi]) continue
+    if (ti === prev + 1) adjacent++
+    if (ti === 0 || !isWordChar(t[ti - 1])) wordStarts++
+    prev = ti
+    qi++
+  }
+  if (qi < q.length) return null
+  const adjacency = q.length > 1 ? adjacent / (q.length - 1) : 0
+  return 0.1
+    + 0.25 * adjacency
+    + 0.15 * (wordStarts / q.length)
+    + 0.1 * (q.length / t.length)
+}
+
+// Case-insensitive scoring entry point. Besides matching the query as a
+// whole, a multi-word query may match with its tokens in any order (so
+// "hurricane dylan" still finds "Bob Dylan — Hurricane"); the token score
+// is the average of the per-token scores, and the best variant wins.
+function fuzzyScore(query: string, target: string): number | null {
+  const q = query.toLowerCase()
+  const t = target.toLowerCase()
+  if (!q.length || !t.length) return null
+
+  let best = fuzzyScoreSingle(q, t)
+
+  const tokens = q.split(/\s+/).filter((tok) => tok.length > 0)
+  if (tokens.length > 1) {
+    let sum = 0
+    let allMatch = true
+    for (const tok of tokens) {
+      const s = fuzzyScoreSingle(tok, t)
+      if (s === null) {
+        allMatch = false
+        break
       }
-      // Match against visible text, title attribute, and data attributes
-      const text = (el.textContent || "")
-        + " " + (el.getAttribute("title") || "")
-        + " " + (el.getAttribute("data-artist-slug") || "")
-        + " " + (el.getAttribute("data-song-slug") || "")
-      el.style.display = fuzzyMatch(q, text) ? "" : "none"
+      sum += s
+    }
+    if (allMatch) {
+      const avg = sum / tokens.length
+      if (best === null || avg > best) best = avg
+    }
+  }
+
+  return best
+}
+
+// Score every item against the query via one or more candidate strings (the
+// best-scoring candidate wins) and return the matches sorted by descending
+// score. Ties keep the catalog's (alphabetical) order — sort is stable.
+function rankMatches<T>(
+  items: T[],
+  candidates: (item: T) => string[],
+  query: string,
+): { item: T; score: number }[] {
+  const scored: { item: T; score: number }[] = []
+  items.forEach((item) => {
+    let best: number | null = null
+    for (const text of candidates(item)) {
+      const s = fuzzyScore(query, text)
+      if (s !== null && (best === null || s > best)) best = s
+    }
+    if (best !== null) scored.push({ item, score: best })
+  })
+  return scored.sort((a, b) => b.score - a.score)
+}
+
+function currentSearchQuery(): string {
+  return ($("search") as HTMLInputElement).value.trim()
+}
+
+// React to the search box changing. An empty query ends the search session
+// and re-renders whatever view the URL points at; a non-empty query renders
+// global results (fetching the catalog first if needed).
+function handleSearchInput(): void {
+  const q = currentSearchQuery()
+  if (q === lastSearchQuery) return
+  lastSearchQuery = q
+
+  if (!q) {
+    invalidateSearchCatalog()
+    const path = location.pathname.slice(
+      baseURL.length + 1, location.pathname.length
+    )
+    route(path)
+    return
+  }
+
+  if (searchCatalog) {
+    renderSearchResults()
+  } else {
+    fetchSearchCatalog()
+  }
+}
+
+// Reset the search box and end the search session without re-routing —
+// used by the tab buttons, which render their own view right after.
+function clearSearch(): void {
+  ;($("search") as HTMLInputElement).value = ""
+  lastSearchQuery = ""
+  invalidateSearchCatalog()
+}
+
+// Load artists, songs, and playlists in parallel, then render results for
+// whatever query is in the box by then (it may have changed while the
+// requests were in flight, or been cleared entirely).
+function fetchSearchCatalog(): void {
+  if (searchCatalogLoading) return
+  searchCatalogLoading = true
+
+  let artists: Artist[] = []
+  let songs: Song[] = []
+  let playlists: PlaylistSummary[] = []
+  let pending = 3
+
+  const done = (): void => {
+    pending--
+    if (pending > 0) return
+    searchCatalogLoading = false
+    searchCatalog = { artists, songs, playlists }
+    if (currentSearchQuery()) renderSearchResults()
+  }
+
+  ajax<Artist[]>("/artists", (data) => { artists = data; done() })
+  ajax<Song[]>("/songs", (data) => { songs = data; done() })
+  ajax<PlaylistSummary[]>("/playlists", (data) => { playlists = data; done() })
+}
+
+function playFirstArtistSong(artistSlug: string): void {
+  ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
+    if (songs.length) playSong(songs[0], artistSlug, false)
+  })
+}
+
+function playFirstPlaylistTrack(id: string): void {
+  ajax<Playlist>(`/playlists/${id}`, (full) => {
+    const idx = full.tracks.findIndex((t) => t.available)
+    if (idx === -1) return
+    playPlaylistTrack(full.id, idx, full.tracks[idx])
+  })
+}
+
+// Render grouped global search results into c2: one section per category
+// (Songs, Artists, Playlists) with the top hits sorted by match quality.
+// c3 is hidden until a result that needs it (an artist or playlist) is
+// opened; clicking a result behaves like clicking it in its home tab, and
+// the play button / double-click starts playback directly.
+function renderSearchResults(): void {
+  if (!searchCatalog) return
+  const query = currentSearchQuery()
+  if (!query) return
+
+  const artists = rankMatches(
+    searchCatalog.artists,
+    (artist) => [artist.name],
+    query,
+  )
+  const songs = rankMatches(
+    searchCatalog.songs,
+    (song) => {
+      const texts = [song.title]
+      if (song.track_artist) {
+        texts.push(song.track_artist)
+        texts.push(song.track_artist + " " + song.title)
+      }
+      return texts
+    },
+    query,
+  )
+  const playlists = rankMatches(
+    searchCatalog.playlists,
+    (playlist) => [playlist.name],
+    query,
+  )
+
+  const c2 = $("c2")
+  c2.innerHTML = ""
+  c2.style.display = "inline-block"
+  $("c3").innerHTML = ""
+  $("c3").style.display = "none"
+  setActiveTab(null)
+  // Widen c2 to an equal share of the space while it shows search results;
+  // the tab views remove the class again when they take c2 back over.
+  $("wrapper").classList.add("searchActive")
+
+  const heading = (label: string, shown: number, total: number): void => {
+    const text = total > shown
+      ? `${label} · top ${shown} of ${total}`
+      : `${label} (${total})`
+    c2.appendChild(shaven(["h3#.searchHeading", text]).rootElement)
+  }
+
+  const pct = (score: number): string =>
+    `${Math.round(score * 100)}% match`
+
+  if (songs.length) {
+    heading(
+      "Songs",
+      Math.min(songs.length, SEARCH_LIMITS.songs),
+      songs.length,
+    )
+    songs.slice(0, SEARCH_LIMITS.songs).forEach(({ item, score }, i) => {
+      const artistSlug = item.artist_slug || ""
+      const songId = `search-song-${i}-${item.id || 0}`
+      songRegistry[songId] = { song: item, artist: artistSlug }
+
+      const link = shaven(["a", item.title]).rootElement
+      if (item.track_artist) {
+        link.appendChild(shaven(
+          ["span#.resultMeta", " — " + item.track_artist]
+        ).rootElement)
+      }
+
+      c2.appendChild(shaven(
+        ["div#.row", {
+          "title":
+            `${item.track_artist || ""} — ${item.title} (${pct(score)})`,
+          "data-search-type": "song",
+          "data-song-id": songId,
+          "data-artist-slug": artistSlug,
+          "data-song-slug": item.slug,
+        },
+          ["button#.play"],
+          [link],
+        ]
+      ).rootElement)
     })
   }
 
-  filter($("c2"))
-  if ($("c3").style.display !== "none") {
-    filter($("c3"))
+  if (artists.length) {
+    heading(
+      "Artists",
+      Math.min(artists.length, SEARCH_LIMITS.artists),
+      artists.length,
+    )
+    artists.slice(0, SEARCH_LIMITS.artists).forEach(({ item, score }) => {
+      c2.appendChild(shaven(
+        ["div#.row", {
+          "title": `${item.name} (${pct(score)})`,
+          "data-search-type": "artist",
+          "data-artist-slug": item.slug,
+        },
+          ["button#.play"],
+          ["a", item.name],
+        ]
+      ).rootElement)
+    })
   }
+
+  if (playlists.length) {
+    heading(
+      "Playlists",
+      Math.min(playlists.length, SEARCH_LIMITS.playlists),
+      playlists.length,
+    )
+    playlists.slice(0, SEARCH_LIMITS.playlists).forEach(({ item, score }) => {
+      const link = shaven(["a", item.name]).rootElement
+      link.appendChild(shaven(
+        ["span#.resultMeta",
+          ` — ${item.track_count} ${item.track_count === 1 ? "track" : "tracks"}`]
+      ).rootElement)
+
+      c2.appendChild(shaven(
+        ["div#.row", {
+          "title": `${item.name} (${pct(score)})`,
+          "data-search-type": "playlist",
+          "data-playlist-id": item.id,
+        },
+          ["button#.play"],
+          [link],
+        ]
+      ).rootElement)
+    })
+  }
+
+  if (!artists.length && !songs.length && !playlists.length) {
+    c2.appendChild(shaven(
+      ["p#.searchEmpty", `No results for “${query}”`]
+    ).rootElement)
+  }
+
+  // Property-assigned so re-renders (and the tab views, which assign their
+  // own delegated handlers to c2) replace rather than stack. Guarded on
+  // data-search-type so a stale handler no-ops on other views' rows.
+  c2.onclick = (e: MouseEvent) => {
+    const target = e.target as HTMLElement
+    const row = target.closest(".row") as HTMLElement | null
+    if (!row) return
+    const type = row.getAttribute("data-search-type")
+    if (!type) return
+    e.preventDefault()
+
+    const isPlay = target.classList.contains("play")
+
+    if (type === "artist") {
+      const slug = row.getAttribute("data-artist-slug") || ""
+      if (isPlay) {
+        e.stopPropagation()
+        playFirstArtistSong(slug)
+        return
+      }
+      highlight(row)
+      printObj.songs(slug)
+      printObj.artist(slug)
+      const url = artistPath(slug)
+      history.pushState({ "url": url }, slug, baseURL + "/" + url)
+      return
+    }
+
+    if (type === "song") {
+      const songId = row.getAttribute("data-song-id")
+      if (!songId || !songRegistry[songId]) return
+      const { song, artist } = songRegistry[songId]
+      if (isPlay) {
+        e.stopPropagation()
+        playSong(song, artist, false)
+        return
+      }
+      highlight(row)
+      printObj.song(song.slug, artist)
+      const url = songPath(artist, song.slug)
+      history.pushState({ "url": url }, song.slug, baseURL + "/" + url)
+      return
+    }
+
+    const playlistId = row.getAttribute("data-playlist-id")
+    if (!playlistId) return
+    if (isPlay) {
+      e.stopPropagation()
+      playFirstPlaylistTrack(playlistId)
+      return
+    }
+    highlight(row)
+    printObj.playlist(playlistId)
+    const url = "playlists/" + playlistId
+    history.pushState({ "url": url }, "Playlist", baseURL + "/" + url)
+  }
+
+  c2.ondblclick = (e: MouseEvent) => {
+    const target = e.target as HTMLElement
+    const row = target.closest(".row") as HTMLElement | null
+    if (!row) return
+    const type = row.getAttribute("data-search-type")
+    if (!type) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (type === "artist") {
+      playFirstArtistSong(row.getAttribute("data-artist-slug") || "")
+    } else if (type === "song") {
+      const songId = row.getAttribute("data-song-id")
+      if (songId && songRegistry[songId]) {
+        const { song, artist } = songRegistry[songId]
+        playSong(song, artist, false)
+      }
+    } else {
+      const playlistId = row.getAttribute("data-playlist-id")
+      if (playlistId) playFirstPlaylistTrack(playlistId)
+    }
+  }
+
+  updatePlayingMarkers()
 }
 
 // Helper function to play a song - centralized to improve reliability
@@ -618,6 +991,8 @@ function finishScanUI(): void {
     bar.style.width = "100%"
   }
   if (label) label.textContent = "Scan complete"
+  // The catalog changed, so any cached search data is stale.
+  invalidateSearchCatalog()
   // Leave the completed bar visible briefly, then hide it and re-render the
   // current view against the refreshed catalog.
   window.setTimeout(() => {
@@ -745,6 +1120,7 @@ function createPlaylistFlow(): void {
     "/playlists",
     { name: trimmed },
     (created) => {
+      invalidateSearchCatalog()
       printObj.playlists()
       if (created) printObj.playlist(created.id)
     }
@@ -761,6 +1137,7 @@ function renamePlaylistFlow(id: string, current: string): void {
     `/playlists/${id}`,
     { name: trimmed },
     () => {
+      invalidateSearchCatalog()
       printObj.playlist(id)
       // If the list is visible in c2, refresh its labels.
       if (currentTab === "playlists") {
@@ -785,6 +1162,7 @@ function deletePlaylistFlow(id: string, name: string): void {
     `/playlists/${id}`,
     null,
     () => {
+      invalidateSearchCatalog()
       if (currentlyPlaying && currentlyPlaying.playlistId === id) {
         currentlyPlaying.playlistId = undefined
         currentlyPlaying.playlistIndex = undefined
@@ -905,7 +1283,10 @@ function addSongToPlaylist(
     "POST",
     `/playlists/${playlistId}/tracks`,
     { artist, title },
-    () => flashAnchor("Added!"),
+    () => {
+      invalidateSearchCatalog()
+      flashAnchor("Added!")
+    },
     (status) => {
       // 409: the song is already in the playlist. The bubble normally
       // disables those rows up front, but a stale list (another tab/window
@@ -925,6 +1306,7 @@ function removePlaylistTrack(playlistId: string, index: number): void {
     `/playlists/${playlistId}/tracks/${index}`,
     null,
     () => {
+      invalidateSearchCatalog()
       // The played track's index might shift; re-render and update markers.
       if (
         currentlyPlaying &&
@@ -1251,6 +1633,7 @@ const printObj = {
   artists(): void {
     currentTab = "artists"
     setActiveTab("artists")
+    $("wrapper").classList.remove("searchActive")
     $("c2").style.display = "inline-block"
     // Restore c3 in case the "Songs" tab had hidden it
     $("c3").style.display = ""
@@ -1287,11 +1670,7 @@ const printObj = {
         link.addEventListener("dblclick", (e: Event) => {
           e.preventDefault()
           e.stopPropagation()
-          ajax<Song[]>(`/artists/${artist.slug}/songs`, (songs) => {
-            if (songs.length) {
-              playSong(songs[0], artist.slug, false)
-            }
-          })
+          playFirstArtistSong(artist.slug)
         })
 
         const container = shaven(
@@ -1580,6 +1959,7 @@ const printObj = {
   allSongs(): void {
     currentTab = "songs"
     setActiveTab("songs")
+    $("wrapper").classList.remove("searchActive")
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""
@@ -1673,6 +2053,7 @@ const printObj = {
     currentTab = "playlists"
     currentPlaylistId = null
     setActiveTab("playlists")
+    $("wrapper").classList.remove("searchActive")
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""
@@ -1715,11 +2096,7 @@ const printObj = {
           link.addEventListener("dblclick", (e: Event) => {
             e.preventDefault()
             e.stopPropagation()
-            ajax<Playlist>(`/playlists/${playlist.id}`, (full) => {
-              const idx = full.tracks.findIndex((t) => t.available)
-              if (idx === -1) return
-              playPlaylistTrack(full.id, idx, full.tracks[idx])
-            })
+            playFirstPlaylistTrack(playlist.id)
           })
           shaven(
             [$("c2"),
@@ -2011,12 +2388,12 @@ function viewController(): Record<string, Function> {
 
       $("search").addEventListener("keyup", (e: Event) => {
         e.stopPropagation()
-        filterRows((e.target as HTMLInputElement).value)
+        handleSearchInput()
       })
 
       // Also handle clearing via the "x" button on type="search" inputs
-      $("search").addEventListener("search", (e: Event) => {
-        filterRows((e.target as HTMLInputElement).value)
+      $("search").addEventListener("search", () => {
+        handleSearchInput()
       })
 
       $("logo").addEventListener("click", () => {
@@ -2025,7 +2402,7 @@ function viewController(): Record<string, Function> {
       })
 
       $("artists").addEventListener("click", () => {
-        ;($("search") as HTMLInputElement).value = ""
+        clearSearch()
         printObj.artists()
         history.pushState(
           { "url": "artists" }, "Artists", baseURL + "/artists"
@@ -2033,13 +2410,13 @@ function viewController(): Record<string, Function> {
       })
 
       $("songs").addEventListener("click", () => {
-        ;($("search") as HTMLInputElement).value = ""
+        clearSearch()
         printObj.allSongs()
         history.pushState({ "url": "songs" }, "Songs", baseURL + "/songs")
       })
 
       $("playlists").addEventListener("click", () => {
-        ;($("search") as HTMLInputElement).value = ""
+        clearSearch()
         printObj.playlists()
         history.pushState(
           { "url": "playlists" }, "Playlists", baseURL + "/playlists"

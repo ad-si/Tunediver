@@ -157,6 +157,15 @@ h3 {
   grid-template-rows: auto auto 1fr;
 }
 
+/* While global search results occupy c2, give them an equal share of the
+   space instead of the fit-content cap: c2 and c4 split what remains next
+   to the tab column roughly 50/50 (c3 is hidden until an artist or
+   playlist result is opened, and its fit-content track collapses to 0). */
+#wrapper.searchActive {
+  grid-template-columns:
+    160px minmax(0, 1fr) fit-content(300px) minmax(300px, 1fr);
+}
+
 #wrapper.scanning #scanBanner {
   display: flex;
 }
@@ -645,6 +654,34 @@ input[type="search"] {
   pointer-events: none;
 }
 
+/* Global search results (rendered into c2): category section headings,
+   secondary text on a hit (artist credit / track count), and the
+   no-results note. */
+.searchHeading {
+  margin: 14px 0 4px 0;
+  padding: 3px 10px 3px 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+#c2 .searchHeading:first-child {
+  margin-top: 0;
+}
+
+.row .resultMeta {
+  color: var(--text-muted);
+}
+
+.searchEmpty {
+  padding: 4px 20px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .row .remove:before {
   width: 14px;
   height: 14px;
@@ -888,6 +925,11 @@ input[type="search"] {
   #wrapper {
     grid-template-columns:
       140px minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 1.6fr);
+  }
+
+  #wrapper.searchActive {
+    grid-template-columns:
+      140px minmax(0, 1fr) fit-content(300px) minmax(0, 1fr);
   }
 
   #c1 {
