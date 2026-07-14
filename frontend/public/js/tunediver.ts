@@ -346,6 +346,7 @@ function renderSearchResults(): void {
   // Widen c2 to an equal share of the space while it shows search results;
   // the tab views remove the class again when they take c2 back over.
   $("wrapper").classList.remove("songsActive")
+  $("wrapper").classList.remove("playlistActive")
   $("wrapper").classList.add("searchActive")
 
   const heading = (label: string, shown: number, total: number): void => {
@@ -1686,6 +1687,7 @@ const printObj = {
     setActiveTab("artists")
     $("wrapper").classList.remove("searchActive")
     $("wrapper").classList.remove("songsActive")
+    $("wrapper").classList.remove("playlistActive")
     $("c2").style.display = "inline-block"
     // Restore c3 in case the "Songs" tab had hidden it, and clear it: the
     // Artists tab lands with an empty song column (it fills only when an
@@ -1788,6 +1790,7 @@ const printObj = {
       // widened-c2 layout since c3 is now showing the artist's tracks.
       $("c3").style.display = ""
       $("wrapper").classList.remove("songsActive")
+      $("wrapper").classList.remove("playlistActive")
 
       // Render each song
       songs.forEach((song, index) => {
@@ -2030,6 +2033,7 @@ const printObj = {
     store.currentTab = "songs"
     setActiveTab("songs")
     $("wrapper").classList.remove("searchActive")
+    $("wrapper").classList.remove("playlistActive")
     // Give the flat song list an equal share of the width (like search
     // results): the rows now carry longer "Artist — Title" labels and c3 is
     // hidden here, so let c2 spread into the space c3 would occupy.
@@ -2131,6 +2135,9 @@ const printObj = {
     setActiveTab("playlists")
     $("wrapper").classList.remove("searchActive")
     $("wrapper").classList.remove("songsActive")
+    // The list view has no open playlist yet; printObj.playlist re-adds this
+    // when one is selected.
+    $("wrapper").classList.remove("playlistActive")
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""
@@ -2196,6 +2203,13 @@ const printObj = {
     ajax<Playlist>(`/playlists/${id}`, (playlist) => {
       store.currentPlaylistId = playlist.id
       $("c3").style.display = ""
+      // Widen c3 so the tracks' "Artist — Title" rows aren't clipped by the
+      // 300px cap. Skip it when opened from a search result: c2 is still
+      // showing the results there and keeps the searchActive layout.
+      if (!$("wrapper").classList.contains("searchActive")) {
+        $("wrapper").classList.remove("songsActive")
+        $("wrapper").classList.add("playlistActive")
+      }
 
       // "2016-08-19T20:09:09Z" → "2016-08-19"; empty when unknown.
       const formatAdded = (iso?: string): string => (iso ? iso.slice(0, 10) : "")

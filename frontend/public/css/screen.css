@@ -170,6 +170,15 @@ h3 {
     160px minmax(0, 1fr) fit-content(300px) minmax(300px, 1fr);
 }
 
+/* An open playlist shows its short-named list in c2 and its tracks in c3, so
+   the growing column is c3 rather than c2: let it spread past the 300px cap
+   (its rows carry the same long "Artist — Title" labels as the Songs list)
+   while c2 stays fit-content and c4 keeps the metadata panel. */
+#wrapper.playlistActive {
+  grid-template-columns:
+    160px fit-content(300px) minmax(0, 1fr) minmax(300px, 1fr);
+}
+
 #wrapper.scanning #scanBanner {
   display: flex;
 }
