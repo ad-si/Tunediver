@@ -39,61 +39,58 @@ function fallbackCopy (text: string): void {
 }
 
 
+// Shared interval handle: a 250 ms fallback that keeps the progress UI moving
+// even when `timeupdate` events are sparse. Only one audio plays at a time, so
+// a single handle suffices; it is cleared whenever any audio pauses or ends.
+let playerUpdateInterval: number | null = null
+
+// Wire an <audio> element to the store and player UI. playSong builds a fresh
+// Audio per track, so this runs once per track; the initial placeholder audio
+// is wired the same way from initPlayer. All playback UI (the play/pause
+// button, row markers, media-session state) follows from store.playState,
+// which these events drive — so nothing here touches the DOM directly.
+function attachAudioListeners(a: HTMLAudioElement): void {
+  a.addEventListener("timeupdate", () => playerUpdater())
+  a.addEventListener("loadedmetadata", () => playerUpdater())
+
+  a.addEventListener("play", () => {
+    store.playState = "playing"
+    playerUpdater()
+    if (playerUpdateInterval !== null) window.clearInterval(playerUpdateInterval)
+    playerUpdateInterval = window.setInterval(() => {
+      if (!audio.paused) playerUpdater()
+    }, 250)
+  })
+
+  a.addEventListener("pause", () => {
+    store.playState = "paused"
+    if (playerUpdateInterval !== null) {
+      window.clearInterval(playerUpdateInterval)
+      playerUpdateInterval = null
+    }
+  })
+
+  a.addEventListener("ended", () => {
+    if (playerUpdateInterval !== null) {
+      window.clearInterval(playerUpdateInterval)
+      playerUpdateInterval = null
+    }
+    a.currentTime = 0
+    store.playState = "paused"
+    playerUpdater()
+    // Repeat-one replays the current track; otherwise auto-advance to the next
+    // neighbour in the active list (a no-op if nothing follows, unless
+    // repeat-all wraps back to the start).
+    if (store.repeatMode === "one") {
+      setPlayingState("playing")
+      return
+    }
+    playAdjacentSong(1)
+  })
+}
+
 function initPlayer () {
-  // Set up interval for continuous updates (as a fallback)
-  let updateInterval: number | null = null;
-
-  function startUpdateInterval() {
-    // Clear any existing interval first
-    if (updateInterval !== null) {
-      window.clearInterval(updateInterval);
-    }
-    // Update every 250ms while playing
-    updateInterval = window.setInterval(() => {
-      if (!audio.paused) {
-        playerUpdater();
-      }
-    }, 250);
-  }
-
-  // Start interval when audio begins playing
-  audio.addEventListener("play", () => {
-    playerUpdater();
-    startUpdateInterval();
-  });
-
-  // Clear interval when audio pauses
-  audio.addEventListener("pause", () => {
-    if (updateInterval !== null) {
-      window.clearInterval(updateInterval);
-      updateInterval = null;
-    }
-    playerUpdater();
-  });
-
-  // Standard timeupdate event (still useful as a backup)
-  audio.addEventListener("timeupdate", () => {
-    playerUpdater();
-  });
-
-  // Also update when audio is loaded/metadata available
-  audio.addEventListener("loadedmetadata", () => {
-    playerUpdater();
-  });
-
-  audio.addEventListener("ended", () => {
-    const playEl = document.getElementById("play")
-    if (playEl) {
-      playEl.className = "paused"
-    }
-    audio.currentTime = 0;
-    playerUpdater();
-
-    if (updateInterval !== null) {
-      window.clearInterval(updateInterval);
-      updateInterval = null;
-    }
-  });
+  attachAudioListeners(audio)
 
   const controlsEl = document.getElementById("controls")
   if (controlsEl) {
@@ -188,11 +185,9 @@ function initPlayer () {
     if (shuffleEl) {
       shuffleEl.addEventListener("click", (e: Event) => {
         e.stopPropagation()
-        shuffleEnabled = !shuffleEnabled
-        shuffleEl.classList.toggle("active", shuffleEnabled)
-        shuffleEl.setAttribute(
-          "title", shuffleEnabled ? "Shuffle: on" : "Shuffle: off"
-        )
+        // The button's .active class and title follow store.shuffleEnabled via
+        // the effect in wireStoreEffects; here we only flip the state.
+        store.shuffleEnabled = !store.shuffleEnabled
       })
     }
 
@@ -200,15 +195,11 @@ function initPlayer () {
     if (repeatEl) {
       repeatEl.addEventListener("click", (e: Event) => {
         e.stopPropagation()
-        // Cycle off → all → one → off.
-        repeatMode = repeatMode === "off"
+        // Cycle off → all → one → off. The button's .active/.one classes and
+        // title follow store.repeatMode via the effect in wireStoreEffects.
+        store.repeatMode = store.repeatMode === "off"
           ? "all"
-          : repeatMode === "all" ? "one" : "off"
-        // `.active` lights the icon for both repeat modes; `.one` adds the
-        // "1" badge that distinguishes repeat-one from repeat-all.
-        repeatEl.classList.toggle("active", repeatMode !== "off")
-        repeatEl.classList.toggle("one", repeatMode === "one")
-        repeatEl.setAttribute("title", "Repeat: " + repeatMode)
+          : store.repeatMode === "all" ? "one" : "off"
       })
     }
 
@@ -238,9 +229,10 @@ function initPlayer () {
     const playerInfoEl = document.getElementById("playerInfo")
     if (playerInfoEl) {
       playerInfoEl.addEventListener("click", () => {
-        if (!currentlyPlaying) return
-        const url = currentlyPlaying.artistSlug + "/" + currentlyPlaying.songSlug
-        history.pushState({"url": url}, currentlyPlaying.songSlug, baseURL + "/" + url)
+        const playing = store.currentlyPlaying
+        if (!playing) return
+        const url = playing.artistSlug + "/" + playing.songSlug
+        history.pushState({"url": url}, playing.songSlug, baseURL + "/" + url)
         route(url)
       })
     }
@@ -257,25 +249,17 @@ function initPlayer () {
   }
 }
 
-function setPlayingState(state: "playing" | "paused"): void {
-  const playEl = document.getElementById("play")
-  if (!playEl) {
-    throw new Error("Play element not found")
-  }
-
+// Start or stop playback. The button class and media-session state are not set
+// here: the audio element's play/pause events update store.playState, and the
+// reactive effect in wireStoreEffects mirrors that onto the UI. This keeps a
+// single path for play state no matter what triggered the change (button,
+// keyboard, media keys, or a track ending).
+function setPlayingState(state: PlayState): void {
   if (state === "playing") {
     audio.play()
-    playEl.className = "playing"
-    if ("mediaSession" in navigator) {
-      navigator.mediaSession.playbackState = "playing"
-    }
   }
   else if (state === "paused") {
     audio.pause()
-    playEl.className = "paused"
-    if ("mediaSession" in navigator) {
-      navigator.mediaSession.playbackState = "paused"
-    }
   }
   else {
     throw new Error("Unknown playing state:" + state)
@@ -334,10 +318,11 @@ function updateSyncedLyrics(): void {
 
   const lines = container.querySelectorAll<HTMLElement>(".lyricLine")
 
+  const playing = store.currentlyPlaying
   const matches =
-    currentlyPlaying !== null &&
-    container.getAttribute("data-artist-slug") === currentlyPlaying.artistSlug &&
-    container.getAttribute("data-song-slug") === currentlyPlaying.songSlug
+    playing !== null &&
+    container.getAttribute("data-artist-slug") === playing.artistSlug &&
+    container.getAttribute("data-song-slug") === playing.songSlug
 
   if (!matches || !audio || isNaN(audio.currentTime)) {
     lines.forEach((line) => line.classList.remove("active"))

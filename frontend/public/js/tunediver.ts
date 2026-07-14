@@ -24,49 +24,10 @@ const baseURL = ""
 const settings: Record<string, any> = {}
 const playlist: Song[] = []
 
-// Tracks which song is currently loaded in the player so that matching rows
-// in the artist (c2) and song (c3) columns can be marked as playing. When
-// playback was started from a playlist, `playlistId` + `playlistIndex` are
-// set so prev/next can step through that playlist rather than guessing
-// from `currentTab`.
-let currentlyPlaying: {
-  artistSlug: string
-  songSlug: string
-  playlistId?: string
-  playlistIndex?: number
-} | null = null
-
-// Which top-level tab is currently active. Drives neighbour navigation
-// (prev/next buttons and auto-advance when a song ends) when no playlist
-// context is set on `currentlyPlaying`:
-//   "artists"   → neighbour is the prev/next song by the same artist
-//   "songs"     → neighbour is the prev/next entry in the flat songs list
-//   "playlists" → neighbour comes from the active playlist (via context)
-let currentTab: "artists" | "songs" | "playlists" = "artists"
-
-// The playlist currently rendered in c3 (when the Playlists tab is active),
-// so the play/remove handlers in the playlist's song rows can reference it.
-let currentPlaylistId: string | null = null
-
-// How the open playlist's tracks are ordered for display. "index" keeps the
-// stored playlist order; the "added-*" modes sort by the per-track Added At
-// timestamp. Sorting only affects rendering — each row still carries its
-// original playlist index so play/remove target the correct backend position.
-type PlaylistSort = "index" | "added-asc" | "added-desc"
-let playlistSort: PlaylistSort = "added-desc"
-
-// When true, prev/next and auto-advance pick a random track from the active
-// context (playlist, songs list, or current artist) instead of the
-// sequential neighbour. Toggled by the shuffle button in the player.
-let shuffleEnabled: boolean = false
-
-// Repeat behaviour, cycled by the repeat button in the player:
-//   "off" — auto-advance stops at the end of the active list (default)
-//   "all" — prev/next and auto-advance wrap around the ends of the list
-//   "one" — the current track replays when it ends
-// Shuffle already plays endlessly, so "all" vs "off" only differ when
-// shuffle is disabled; "one" overrides both.
-let repeatMode: "off" | "all" | "one" = "off"
+// The current track, active tab, open playlist, playlist sort, shuffle, and
+// repeat state now live in the reactive `store` (see store.ts). Row markers,
+// the play/pause button, and the shuffle/repeat button state re-sync
+// automatically when those fields change, via the effects in wireStoreEffects.
 
 // Keys ("artistSlug/songSlug") of the most recently played tracks, oldest
 // first. Shuffle avoids re-picking anything in this window so the same songs
@@ -88,17 +49,19 @@ function setActiveTab(tabId: string | null): void {
 }
 
 // Add/remove the `.playing` CSS class on artist and song rows so the
-// currently playing track is visually highlighted in the columns.
-// Called whenever the playback state or the rendered lists change.
+// currently playing track is visually highlighted in the columns. The store
+// effect in wireStoreEffects re-runs this when the current track or play state
+// changes; the render functions also call it to mark their freshly-built rows.
 function updatePlayingMarkers(): void {
   document.querySelectorAll(".row.playing").forEach((r) => {
     r.classList.remove("playing")
   })
 
-  if (!currentlyPlaying || audio.paused) return
+  const playing = store.currentlyPlaying
+  if (!playing || store.playState !== "playing") return
 
-  const artistSlug = currentlyPlaying.artistSlug
-  const songSlug = currentlyPlaying.songSlug
+  const artistSlug = playing.artistSlug
+  const songSlug = playing.songSlug
 
   // Artist rows carry only an artist slug; song rows (artist tab's c3, the
   // songs tab's flat list in c2, and search results) also carry a song slug,
@@ -116,26 +79,60 @@ function updatePlayingMarkers(): void {
     .forEach((row) => row.classList.add("playing"))
 }
 
-// --- Global fuzzy search ---------------------------------------------------
+// Register the reactive effects that keep the player UI in sync with the
+// store. Called once from index() after the player DOM exists. Each effect
+// also runs immediately on registration, which is a harmless no-op against the
+// defaults (paused, nothing playing, shuffle off, repeat off).
+function wireStoreEffects(): void {
+  // Row highlighting and synced-lyrics highlighting follow the current track
+  // and play state, wherever they were changed from.
+  effect(["currentlyPlaying", "playState"], () => {
+    updatePlayingMarkers()
+    updateSyncedLyrics()
+  })
 
-// Catalog data backing the global search, fetched once when a search session
-// starts (first keystroke) and reused while the user types. Invalidated when
-// the query is cleared, a library scan finishes, or playlists are mutated,
-// so the next search sees fresh data.
-let searchCatalog: {
-  artists: Artist[]
-  songs: Song[]
-  playlists: PlaylistSummary[]
-} | null = null
-let searchCatalogLoading = false
+  // The transport play/pause button and the OS media-session state mirror
+  // playState (set by the audio element's play/pause/ended events).
+  effect(["playState"], () => {
+    const playEl = document.getElementById("play")
+    if (playEl) {
+      playEl.className = store.playState === "playing" ? "playing" : "paused"
+    }
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = store.playState
+    }
+  })
 
-function invalidateSearchCatalog(): void {
-  searchCatalog = null
+  // Shuffle button: `.active` class + title.
+  effect(["shuffleEnabled"], () => {
+    const el = document.getElementById("shuffle")
+    if (!el) return
+    el.classList.toggle("active", store.shuffleEnabled)
+    el.setAttribute(
+      "title", store.shuffleEnabled ? "Shuffle: on" : "Shuffle: off"
+    )
+  })
+
+  // Repeat button: `.active` lights the icon for both repeat modes; `.one`
+  // adds the "1" badge that distinguishes repeat-one from repeat-all.
+  effect(["repeatMode"], () => {
+    const el = document.getElementById("repeat")
+    if (!el) return
+    el.classList.toggle("active", store.repeatMode !== "off")
+    el.classList.toggle("one", store.repeatMode === "one")
+    el.setAttribute("title", "Repeat: " + store.repeatMode)
+  })
 }
 
-// Last query handleSearchInput acted on, so keyup events that didn't change
-// the value (arrow keys, modifiers) don't re-render or re-route.
-let lastSearchQuery = ""
+// --- Global fuzzy search ---------------------------------------------------
+
+// The search catalog, its loading flag, and the last-acted query live in the
+// reactive `store` (see store.ts). Invalidate drops the cached catalog so the
+// next search re-fetches (after the query clears, a scan finishes, or
+// playlists mutate).
+function invalidateSearchCatalog(): void {
+  store.searchCatalog = null
+}
 
 // How many hits each category section shows at most.
 const SEARCH_LIMITS = { artists: 8, songs: 20, playlists: 8 }
@@ -241,8 +238,8 @@ function currentSearchQuery(): string {
 // global results (fetching the catalog first if needed).
 function handleSearchInput(): void {
   const q = currentSearchQuery()
-  if (q === lastSearchQuery) return
-  lastSearchQuery = q
+  if (q === store.lastSearchQuery) return
+  store.lastSearchQuery = q
 
   if (!q) {
     invalidateSearchCatalog()
@@ -253,7 +250,7 @@ function handleSearchInput(): void {
     return
   }
 
-  if (searchCatalog) {
+  if (store.searchCatalog) {
     renderSearchResults()
   } else {
     fetchSearchCatalog()
@@ -264,7 +261,7 @@ function handleSearchInput(): void {
 // used by the tab buttons, which render their own view right after.
 function clearSearch(): void {
   ;($("search") as HTMLInputElement).value = ""
-  lastSearchQuery = ""
+  store.lastSearchQuery = ""
   invalidateSearchCatalog()
 }
 
@@ -272,8 +269,8 @@ function clearSearch(): void {
 // whatever query is in the box by then (it may have changed while the
 // requests were in flight, or been cleared entirely).
 function fetchSearchCatalog(): void {
-  if (searchCatalogLoading) return
-  searchCatalogLoading = true
+  if (store.searchCatalogLoading) return
+  store.searchCatalogLoading = true
 
   let artists: Artist[] = []
   let songs: Song[] = []
@@ -283,8 +280,8 @@ function fetchSearchCatalog(): void {
   const done = (): void => {
     pending--
     if (pending > 0) return
-    searchCatalogLoading = false
-    searchCatalog = { artists, songs, playlists }
+    store.searchCatalogLoading = false
+    store.searchCatalog = { artists, songs, playlists }
     if (currentSearchQuery()) renderSearchResults()
   }
 
@@ -313,17 +310,17 @@ function playFirstPlaylistTrack(id: string): void {
 // opened; clicking a result behaves like clicking it in its home tab, and
 // the play button / double-click starts playback directly.
 function renderSearchResults(): void {
-  if (!searchCatalog) return
+  if (!store.searchCatalog) return
   const query = currentSearchQuery()
   if (!query) return
 
   const artists = rankMatches(
-    searchCatalog.artists,
+    store.searchCatalog.artists,
     (artist) => [artist.name],
     query,
   )
   const songs = rankMatches(
-    searchCatalog.songs,
+    store.searchCatalog.songs,
     (song) => {
       const texts = [song.title]
       if (song.track_artist) {
@@ -335,7 +332,7 @@ function renderSearchResults(): void {
     query,
   )
   const playlists = rankMatches(
-    searchCatalog.playlists,
+    store.searchCatalog.playlists,
     (playlist) => [playlist.name],
     query,
   )
@@ -541,48 +538,19 @@ function playSong(
     return
   }
 
-  // Stop any currently playing audio
+  // Stop any currently playing audio (its "pause" event resets store.playState,
+  // which the effects mirror onto the button and row markers).
   if (audio && !audio.paused) {
     audio.pause()
-    const playEl = document.getElementById("play")
-    if (playEl) {
-      playEl.className = "paused"
-    }
   }
 
   try {
     // Create a new Audio object with the song source
     const newAudio = new Audio(song.src)
 
-    // First set up all event listeners before replacing the global audio reference
-    // This ensures no event listeners are lost during transition
-
-    // Re-initialize all event listeners on the new audio object
-    newAudio.addEventListener("timeupdate", () => playerUpdater())
-    newAudio.addEventListener("loadedmetadata", () => playerUpdater())
-    newAudio.addEventListener("play", () => {
-      playerUpdater()
-      updatePlayingMarkers()
-    })
-    newAudio.addEventListener("pause", () => updatePlayingMarkers())
-
-    newAudio.addEventListener("ended", () => {
-      const playEl = document.getElementById("play")
-      if (playEl) {
-        playEl.className = "paused"
-      }
-      newAudio.currentTime = 0
-      playerUpdater()
-      updatePlayingMarkers()
-      // Repeat-one replays the current track; otherwise auto-advance to the
-      // next neighbour in the active tab's list (a no-op if nothing follows,
-      // unless repeat-all wraps back to the start).
-      if (repeatMode === "one") {
-        setPlayingState("playing")
-        return
-      }
-      playAdjacentSong(1)
-    }, false)
+    // Wire the fresh audio to the store + player UI (play/pause/ended drive
+    // store.playState and auto-advance) before swapping it in.
+    attachAudioListeners(newAudio)
 
     // Set the volume to match the current volume
     newAudio.volume = audio.volume
@@ -590,10 +558,10 @@ function playSong(
     // Now replace the global audio instance
     audio = newAudio
 
-    // Remember which track is loaded so row markers can find it. Markers
-    // are applied on the "play" event (or removed on "pause"/"ended"),
-    // so pre-loaded tracks that aren't autoplaying stay unmarked.
-    currentlyPlaying = { artistSlug: artistName, songSlug: song.slug }
+    // Remember which track is loaded so row markers can find it. Setting this
+    // triggers the store effect that (re)applies the .playing markers; they
+    // only show once playback actually starts (store.playState === "playing").
+    store.currentlyPlaying = { artistSlug: artistName, songSlug: song.slug }
 
     // Record play history for shuffle's recent-repeat avoidance. Only count
     // tracks that actually start playing, not ones merely pre-loaded (the
@@ -658,18 +626,18 @@ function playSong(
 // Songs tab we step through the flat, alphabetical all-songs list. No-op
 // if nothing is playing, or if there is no neighbour in that direction.
 function playAdjacentSong(direction: 1 | -1): void {
-  if (!currentlyPlaying) return
+  if (!store.currentlyPlaying) return
 
   // In shuffle mode the direction is irrelevant: prev, next, and
   // auto-advance all jump to a random track in the active context.
-  if (shuffleEnabled) {
+  if (store.shuffleEnabled) {
     playRandomInContext()
     return
   }
 
-  const { artistSlug, songSlug, playlistId, playlistIndex } = currentlyPlaying
+  const { artistSlug, songSlug, playlistId, playlistIndex } = store.currentlyPlaying
 
-  // Playlist context overrides currentTab: even if the user has navigated
+  // Playlist context overrides store.currentTab: even if the user has navigated
   // away from the Playlists tab while a song plays, prev/next still walks
   // the playlist that started playback.
   if (playlistId !== undefined && playlistIndex !== undefined) {
@@ -684,7 +652,7 @@ function playAdjacentSong(direction: 1 | -1): void {
 
       // If we're still viewing this playlist in c3, sync the highlight and
       // detail view so the UI reflects what's playing.
-      if (currentPlaylistId === playlist.id) {
+      if (store.currentPlaylistId === playlist.id) {
         const row = $("c3").querySelector(
           `.row[data-playlist-index="${targetIdx}"]`
         ) as HTMLElement | null
@@ -700,7 +668,7 @@ function playAdjacentSong(direction: 1 | -1): void {
     return
   }
 
-  if (currentTab === "songs") {
+  if (store.currentTab === "songs") {
     ajax<Song[]>("/songs", (songs) => {
       const idx = songs.findIndex((s) =>
         s.slug === songSlug && (s.artist_slug || "") === artistSlug
@@ -748,7 +716,7 @@ function neighbourIndex(
 ): number | null {
   const next = idx + direction
   if (next >= 0 && next < length) return next
-  if (repeatMode === "all" && length > 0) return (next + length) % length
+  if (store.repeatMode === "all" && length > 0) return (next + length) % length
   return null
 }
 
@@ -803,8 +771,8 @@ function randomFreshIndex(keys: string[], currentKey: string): number {
 // mirroring the per-context highlight/URL bookkeeping of playAdjacentSong.
 // Used by prev/next and auto-advance while shuffle is enabled.
 function playRandomInContext(): void {
-  if (!currentlyPlaying) return
-  const { artistSlug, songSlug, playlistId, playlistIndex } = currentlyPlaying
+  if (!store.currentlyPlaying) return
+  const { artistSlug, songSlug, playlistId, playlistIndex } = store.currentlyPlaying
 
   if (playlistId !== undefined && playlistIndex !== undefined) {
     ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
@@ -820,7 +788,7 @@ function playRandomInContext(): void {
       ]
       playPlaylistTrack(playlist.id, pick.index, pick.track)
 
-      if (currentPlaylistId === playlist.id) {
+      if (store.currentPlaylistId === playlist.id) {
         const row = $("c3").querySelector(
           `.row[data-playlist-index="${pick.index}"]`
         ) as HTMLElement | null
@@ -836,7 +804,7 @@ function playRandomInContext(): void {
     return
   }
 
-  if (currentTab === "songs") {
+  if (store.currentTab === "songs") {
     ajax<Song[]>("/songs", (songs) => {
       if (!songs.length) return
       const keys = songs.map((s) => songKey(s.artist_slug || "", s.slug))
@@ -896,7 +864,7 @@ function tryRandomArtist(remaining: Artist[]): void {
 }
 
 // Wrap playSong with playlist-context tracking so prev/next can walk the
-// playlist. We patch `currentlyPlaying` after `playSong` sets it because
+// playlist. We patch `store.currentlyPlaying` after `playSong` sets it because
 // playSong itself has no notion of playlists.
 function playPlaylistTrack(
   playlistId: string,
@@ -905,9 +873,9 @@ function playPlaylistTrack(
 ): void {
   if (!track.available) return
   playSong(track as unknown as Song, track.artist_slug, false)
-  if (currentlyPlaying) {
-    currentlyPlaying.playlistId = playlistId
-    currentlyPlaying.playlistIndex = index
+  if (store.currentlyPlaying) {
+    store.currentlyPlaying.playlistId = playlistId
+    store.currentlyPlaying.playlistIndex = index
   }
 }
 
@@ -1140,7 +1108,7 @@ function renamePlaylistFlow(id: string, current: string): void {
       invalidateSearchCatalog()
       printObj.playlist(id)
       // If the list is visible in c2, refresh its labels.
-      if (currentTab === "playlists") {
+      if (store.currentTab === "playlists") {
         const c2Playlists = $("c2").querySelectorAll(`.row[data-playlist-id]`)
         c2Playlists.forEach((r) => {
           const el = r as HTMLElement
@@ -1163,11 +1131,11 @@ function deletePlaylistFlow(id: string, name: string): void {
     null,
     () => {
       invalidateSearchCatalog()
-      if (currentlyPlaying && currentlyPlaying.playlistId === id) {
-        currentlyPlaying.playlistId = undefined
-        currentlyPlaying.playlistIndex = undefined
+      if (store.currentlyPlaying && store.currentlyPlaying.playlistId === id) {
+        store.currentlyPlaying.playlistId = undefined
+        store.currentlyPlaying.playlistIndex = undefined
       }
-      currentPlaylistId = null
+      store.currentPlaylistId = null
       printObj.playlists()
       history.pushState(
         { "url": "playlists" }, "Playlists", baseURL + "/playlists"
@@ -1309,15 +1277,15 @@ function removePlaylistTrack(playlistId: string, index: number): void {
       invalidateSearchCatalog()
       // The played track's index might shift; re-render and update markers.
       if (
-        currentlyPlaying &&
-        currentlyPlaying.playlistId === playlistId &&
-        currentlyPlaying.playlistIndex !== undefined
+        store.currentlyPlaying &&
+        store.currentlyPlaying.playlistId === playlistId &&
+        store.currentlyPlaying.playlistIndex !== undefined
       ) {
-        if (currentlyPlaying.playlistIndex === index) {
-          currentlyPlaying.playlistId = undefined
-          currentlyPlaying.playlistIndex = undefined
-        } else if (currentlyPlaying.playlistIndex > index) {
-          currentlyPlaying.playlistIndex -= 1
+        if (store.currentlyPlaying.playlistIndex === index) {
+          store.currentlyPlaying.playlistId = undefined
+          store.currentlyPlaying.playlistIndex = undefined
+        } else if (store.currentlyPlaying.playlistIndex > index) {
+          store.currentlyPlaying.playlistIndex -= 1
         }
       }
       printObj.playlist(playlistId)
@@ -1631,7 +1599,7 @@ function trackArtistNode(song: Song, fallbackSlug: string): any[] {
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
-    currentTab = "artists"
+    store.currentTab = "artists"
     setActiveTab("artists")
     $("wrapper").classList.remove("searchActive")
     $("c2").style.display = "inline-block"
@@ -1957,7 +1925,7 @@ const printObj = {
   // c2. c3 is hidden because this view has no "second column" — clicking
   // a song jumps straight to its detail in c4, double-clicking plays it.
   allSongs(): void {
-    currentTab = "songs"
+    store.currentTab = "songs"
     setActiveTab("songs")
     $("wrapper").classList.remove("searchActive")
     $("c2").innerHTML = ""
@@ -2050,8 +2018,8 @@ const printObj = {
   // List view in c2: all playlists, with a "+ New playlist" row at the top
   // that prompts for a name and creates the playlist via POST.
   playlists(): void {
-    currentTab = "playlists"
-    currentPlaylistId = null
+    store.currentTab = "playlists"
+    store.currentPlaylistId = null
     setActiveTab("playlists")
     $("wrapper").classList.remove("searchActive")
     $("c2").innerHTML = ""
@@ -2117,7 +2085,7 @@ const printObj = {
   // Detail of a single playlist: tracks in c3, metadata/rename/delete in c4.
   playlist(id: string): void {
     ajax<Playlist>(`/playlists/${id}`, (playlist) => {
-      currentPlaylistId = playlist.id
+      store.currentPlaylistId = playlist.id
       $("c3").style.display = ""
 
       // "2016-08-19T20:09:09Z" → "2016-08-19"; empty when unknown.
@@ -2128,8 +2096,8 @@ const printObj = {
       // data-playlist-index still maps back to `playlist.tracks`.
       const sortedEntries = (): { track: PlaylistTrack; index: number }[] => {
         const entries = playlist.tracks.map((track, index) => ({ track, index }))
-        if (playlistSort === "index") return entries
-        const dir = playlistSort === "added-asc" ? 1 : -1
+        if (store.playlistSort === "index") return entries
+        const dir = store.playlistSort === "added-asc" ? 1 : -1
         return entries.sort((a, b) => {
           const av = a.track.added_at || ""
           const bv = b.track.added_at || ""
@@ -2264,15 +2232,15 @@ const printObj = {
         sortControls.forEach((btn) => {
           btn.classList.toggle(
             "active",
-            btn.getAttribute("data-sort") === playlistSort
+            btn.getAttribute("data-sort") === store.playlistSort
           )
         })
       }
       sortControls.forEach((btn) => {
         btn.addEventListener("click", () => {
           const mode = btn.getAttribute("data-sort") as PlaylistSort | null
-          if (!mode || mode === playlistSort) return
-          playlistSort = mode
+          if (!mode || mode === store.playlistSort) return
+          store.playlistSort = mode
           markActiveSort()
           renderTracks()
         })
@@ -2465,6 +2433,7 @@ function viewController(): Record<string, Function> {
     index(): void {
       this.framework()
       initPlayer()
+      wireStoreEffects()
       printObj.startpage()
     },
 
