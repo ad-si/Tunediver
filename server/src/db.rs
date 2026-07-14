@@ -65,7 +65,7 @@ const SCHEMA_VERSION: i64 = 1;
 // (multiple ARTIST fields were previously truncated to the first artist).
 pub const CURRENT_TAGS_VERSION: i64 = 1;
 
-// Open (creating if needed) a pooled connection to the cache database. WAL
+// Open (creating if needed) a pooled connection to the database. WAL
 // mode lets readers (cover/detail endpoints) proceed while the background
 // scan writes. `foreign_keys` is per-connection, so it's set on every checkout
 // via `with_init` — required for the playlist ON DELETE CASCADE to fire.

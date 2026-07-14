@@ -1642,21 +1642,21 @@ fn default_playlists_path(music_path: &Path) -> PathBuf {
   }
 }
 
-// Default cache database location: fast local storage, deliberately NOT beside
-// the music directory — the music may live on slow or removable media (a NAS,
-// an SD card, an external/backup drive), and the whole point of the cache is to
-// avoid touching that medium for metadata. The cache also holds playlists
-// (durable user data), so it goes under Application Support rather than a
-// purgeable cache dir. Falls back to the working directory if $HOME is unset.
-// Override with the `cache_db_path` config key / `ROCKET_CACHE_DB_PATH`.
-fn default_cache_db_path() -> PathBuf {
+// Default database location: fast local storage, deliberately NOT beside the
+// music directory — the music may live on slow or removable media (a NAS, an
+// SD card, an external/backup drive), and a key job of the DB is to cache
+// metadata so that medium isn't touched. The DB also holds playlists (primary
+// user data that lives nowhere else), so it goes under Application Support
+// rather than a purgeable cache dir. Falls back to the working directory if
+// $HOME is unset. Override with the `db_path` config key / `ROCKET_DB_PATH`.
+fn default_db_path() -> PathBuf {
   if let Some(home) = std::env::var_os("HOME") {
     let dir = PathBuf::from(home).join("Library/Application Support/Tunediver");
     if fs::create_dir_all(&dir).is_ok() {
-      return dir.join("tunediver-cache.db");
+      return dir.join("tunediver.db");
     }
   }
-  PathBuf::from("tunediver-cache.db")
+  PathBuf::from("tunediver.db")
 }
 
 #[launch]
@@ -1669,13 +1669,12 @@ fn rocket() -> _ {
 
   println!("Starting Tunediver with music path: {}", music_path);
 
-  let cache_db_path: PathBuf = figment
-    .extract_inner::<String>("cache_db_path")
+  let db_path: PathBuf = figment
+    .extract_inner::<String>("db_path")
     .map(PathBuf::from)
-    .unwrap_or_else(|_| default_cache_db_path());
-  println!("Using cache database: {}", cache_db_path.display());
-  let pool =
-    db::open_pool(&cache_db_path).expect("Failed to open cache database");
+    .unwrap_or_else(|_| default_db_path());
+  println!("Using database: {}", db_path.display());
+  let pool = db::open_pool(&db_path).expect("Failed to open database");
 
   // Serve immediately from whatever is cached; a background scan below
   // reconciles against the (possibly slow) music folder.

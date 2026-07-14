@@ -37,7 +37,7 @@
 - `desktop/` — Tauri 2 scaffold, not yet integrated
 - `design/` — design assets
 - Music path: default in `server/Rocket.toml`, overridable via `ROCKET_MUSIC_PATH` env var or `MUSIC_PATH` makefile arg; top-level `make start` uses `./example_music/`
-- Metadata cache: `server/src/db.rs` is a SQLite layer (rusqlite + r2d2) caching all per-track tag data (artist, title, lyrics, `DATE_ADDED`), embedded cover art (BLOB), and playlists — everything except the raw audio, which is still streamed from disk. A background scan reconciles the cache on startup and on `POST /api/reload` (poll `GET /api/scan-status` for completion), re-reading only files whose mtime/size changed. DB path defaults to fast local storage (`~/Library/Application Support/Tunediver/tunediver-cache.db`), never next to the music (which may be on slow/removable media); override with `ROCKET_CACHE_DB_PATH`. `playlists.json` is imported once into the DB if present.
+- Database: `server/src/db.rs` is a SQLite layer (rusqlite + r2d2). It caches all per-track tag data (artist, title, lyrics, `DATE_ADDED`) and embedded cover art (BLOB) — everything except the raw audio, which is still streamed from disk — and is also the primary store for playlists (which live nowhere else). A background scan reconciles the cached tag data on startup and on `POST /api/reload` (poll `GET /api/scan-status` for completion), re-reading only files whose mtime/size changed. DB path defaults to fast local storage (`~/Library/Application Support/Tunediver/tunediver.db`), never next to the music (which may be on slow/removable media); override with `ROCKET_DB_PATH`. `playlists.json` is imported once into the DB if present.
 
 
 ## Development Workflow
