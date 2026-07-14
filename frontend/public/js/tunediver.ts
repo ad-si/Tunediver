@@ -53,7 +53,7 @@ let currentPlaylistId: string | null = null
 // timestamp. Sorting only affects rendering — each row still carries its
 // original playlist index so play/remove target the correct backend position.
 type PlaylistSort = "index" | "added-asc" | "added-desc"
-let playlistSort: PlaylistSort = "index"
+let playlistSort: PlaylistSort = "added-desc"
 
 // When true, prev/next and auto-advance pick a random track from the active
 // context (playlist, songs list, or current artist) instead of the
