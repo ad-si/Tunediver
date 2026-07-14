@@ -764,6 +764,12 @@ function songKey(artistSlug: string, songSlug: string): string {
   return artistSlug + "/" + songSlug
 }
 
+// The visible row label for a track: "Artist — Title", falling back to
+// just the title when no artist credit is known.
+function songLabel(trackArtist: string | undefined, title: string): string {
+  return trackArtist ? trackArtist + " — " + title : title
+}
+
 // Client-side route paths (without baseURL or a leading slash) — the value
 // stored in history state and passed to route(). Artist and song views live
 // under /artists so they never collide with the root-level static-asset and
@@ -2025,7 +2031,9 @@ const printObj = {
           artist: artistSlug,
         }
 
-        const link = shaven(["a", song.title]).rootElement
+        const link = shaven(
+          ["a", songLabel(song.track_artist, song.title)]
+        ).rootElement
         const play = shaven(["button#.play"]).rootElement
 
         shaven(
@@ -2202,7 +2210,9 @@ const printObj = {
           playlist.tracks.some((t) => Boolean(t.added_at))
         )
         sortedEntries().forEach(({ track, index }) => {
-          const link = shaven(["a", track.title]).rootElement
+          const link = shaven(
+            ["a", songLabel(track.track_artist, track.title)]
+          ).rootElement
           const play = shaven(["button#.play"]).rootElement
           const remove = shaven(["button#.remove"]).rootElement
           const added = shaven(
