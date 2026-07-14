@@ -905,8 +905,10 @@ struct SingleSongResponse {
 #[serde(crate = "rocket::serde")]
 struct ArtistInfo {
   name: String,
-  bio: String,
-  country: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  bio: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  country: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1128,8 +1130,9 @@ fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
   Json(ArtistInfoResponse {
     data: ArtistInfo {
       name: decoded.clone(),
-      bio: format!("This is the bio of {}", decoded),
-      country: "Someland".to_string(),
+      // No real bio/country source yet; omit rather than fabricate.
+      bio: None,
+      country: None,
     },
   })
 }

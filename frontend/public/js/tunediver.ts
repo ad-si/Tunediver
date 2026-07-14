@@ -1760,7 +1760,7 @@ const printObj = {
             ],
             ["nav#artistNav",
               ["h2#heading", artist.name],
-              ["p#country", artist.country || "Niemandsland"]
+              ...(artist.country ? [["p#country", artist.country]] : []),
             ],
             ["div#bio", artist.bio || ""]
           ]
