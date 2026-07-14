@@ -1230,7 +1230,10 @@ function trackArtistNode(song: Song, fallbackSlug: string): any[] {
     : [song.track_artist || ""]
   names.forEach((name, i) => {
     const slug = hasList ? encodeURIComponent(name) : fallbackSlug
-    if (i > 0) node.push(", ")
+    // Separators must be wrapped in an element: shaven treats a bare string
+    // child as "set text content", wiping the links already appended before
+    // it, so a plain ", " would leave only the last artist visible.
+    if (i > 0) node.push(["span.artistSep", ", "])
     node.push(["a.trackArtistLink", {
       "href": baseURL + "/" + artistPath(slug),
       "data-artist-slug": slug,
