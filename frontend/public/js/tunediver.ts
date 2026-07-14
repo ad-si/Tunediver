@@ -1761,6 +1761,17 @@ const printObj = {
             ["nav#artistNav",
               ["h2#heading", artist.name],
               ...(artist.country ? [["p#country", artist.country]] : []),
+              // Best-effort guess of the artist's Wikipedia article URL from
+              // the name (spaces → underscores). Not guaranteed to resolve.
+              ["p#wikipedia",
+                ["a", {
+                  href: "https://en.wikipedia.org/wiki/" +
+                    encodeURIComponent(artist.name.replace(/ /g, "_")),
+                  target: "_blank",
+                  rel: "noopener"},
+                  "Wikipedia"
+                ]
+              ]
             ],
             ["div#bio", artist.bio || ""]
           ]
