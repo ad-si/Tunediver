@@ -649,8 +649,11 @@ input[type="search"] {
 }
 
 /* Per-track "Added At" date shown on the right of a playlist row. Sits left
-   of the hover remove button; the row's title link reserves space for it. */
-.playlistRow a {
+   of the hover remove button; the row's title link reserves space for it —
+   but only when the playlist actually has any dates (see .hasAddedDates,
+   toggled in renderTracks). Without dates the base .row a padding applies, so
+   the title extends to just short of the hover remove button. */
+.hasAddedDates .playlistRow a {
   padding-right: 96px;
 }
 

@@ -1759,6 +1759,13 @@ const printObj = {
 
       const renderTracks = (): void => {
         $("c3").innerHTML = ""
+        // Only reserve the wide right-hand gutter for the "Added At" column when
+        // at least one track actually has a date; otherwise rows fall back to
+        // the base padding (just enough for the hover remove button).
+        $("c3").classList.toggle(
+          "hasAddedDates",
+          playlist.tracks.some((t) => Boolean(t.added_at))
+        )
         sortedEntries().forEach(({ track, index }) => {
           const link = shaven(["a", track.title]).rootElement
           const play = shaven(["button#.play"]).rootElement
