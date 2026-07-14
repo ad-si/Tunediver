@@ -345,6 +345,7 @@ function renderSearchResults(): void {
   setActiveTab(null)
   // Widen c2 to an equal share of the space while it shows search results;
   // the tab views remove the class again when they take c2 back over.
+  $("wrapper").classList.remove("songsActive")
   $("wrapper").classList.add("searchActive")
 
   const heading = (label: string, shown: number, total: number): void => {
@@ -1684,6 +1685,7 @@ const printObj = {
     store.currentTab = "artists"
     setActiveTab("artists")
     $("wrapper").classList.remove("searchActive")
+    $("wrapper").classList.remove("songsActive")
     $("c2").style.display = "inline-block"
     // Restore c3 in case the "Songs" tab had hidden it, and clear it: the
     // Artists tab lands with an empty song column (it fills only when an
@@ -1771,8 +1773,10 @@ const printObj = {
     ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
       // Clear the container first
       $("c3").innerHTML = ""
-      // Restore c3 in case the "Songs" tab had hidden it
+      // Restore c3 in case the "Songs" tab had hidden it, and drop the
+      // widened-c2 layout since c3 is now showing the artist's tracks.
       $("c3").style.display = ""
+      $("wrapper").classList.remove("songsActive")
 
       // Render each song
       songs.forEach((song, index) => {
@@ -2015,6 +2019,10 @@ const printObj = {
     store.currentTab = "songs"
     setActiveTab("songs")
     $("wrapper").classList.remove("searchActive")
+    // Give the flat song list an equal share of the width (like search
+    // results): the rows now carry longer "Artist — Title" labels and c3 is
+    // hidden here, so let c2 spread into the space c3 would occupy.
+    $("wrapper").classList.add("songsActive")
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""
@@ -2111,6 +2119,7 @@ const printObj = {
     store.currentPlaylistId = null
     setActiveTab("playlists")
     $("wrapper").classList.remove("searchActive")
+    $("wrapper").classList.remove("songsActive")
     $("c2").innerHTML = ""
     $("c3").innerHTML = ""
     $("c4").innerHTML = ""

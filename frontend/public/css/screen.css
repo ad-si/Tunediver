@@ -160,8 +160,12 @@ h3 {
 /* While global search results occupy c2, give them an equal share of the
    space instead of the fit-content cap: c2 and c4 split what remains next
    to the tab column roughly 50/50 (c3 is hidden until an artist or
-   playlist result is opened, and its fit-content track collapses to 0). */
-#wrapper.searchActive {
+   playlist result is opened, and its fit-content track collapses to 0).
+   The flat Songs list gets the same treatment (.songsActive) so its longer
+   "Artist — Title" rows aren't clipped by the 300px cap; c3 is hidden there
+   too, so its track collapses and c2 spreads into the freed space. */
+#wrapper.searchActive,
+#wrapper.songsActive {
   grid-template-columns:
     160px minmax(0, 1fr) fit-content(300px) minmax(300px, 1fr);
 }
