@@ -9,6 +9,36 @@ let tempVolume: number = 0.5
 let isSeekingProgress: boolean = false
 
 
+// Copy text to the clipboard. navigator.clipboard is only available in secure
+// contexts (HTTPS / localhost); Tunediver is usually served over plain HTTP on
+// a LAN, where it is undefined. Fall back to a hidden textarea + execCommand.
+function copyToClipboard (text: string): void {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+  }
+  else {
+    fallbackCopy(text)
+  }
+}
+
+function fallbackCopy (text: string): void {
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  // Keep it out of view and non-scrolling while still selectable.
+  textarea.style.position = "fixed"
+  textarea.style.top = "-9999px"
+  textarea.setAttribute("readonly", "")
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand("copy")
+  }
+  finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+
 function initPlayer () {
   // Set up interval for continuous updates (as a fallback)
   let updateInterval: number | null = null;
@@ -72,6 +102,8 @@ function initPlayer () {
         ["button#previous", {"disabled": "disabled"}],
         ["button#play", {"class": "paused", "disabled": "disabled"}],
         ["button#next", {"disabled": "disabled"}],
+        ["button#shuffle"],
+        ["button#repeat"],
         ["span#time", "0:00"],
         ["div",
           ["p#playerInfo", ""],
@@ -80,12 +112,10 @@ function initPlayer () {
           ]
         ],
         ["span#duration", "- 0:00"],
-        ["button#shuffle"],
-        ["button#repeat"],
-        ["button#share"],
         ["button#mute"],
         ["input#volume", {type: "range", min: "0", max: "1", step: "0.01", value: "0.5"}],
-        ["button#loud"]
+        ["button#loud"],
+        ["button#copy"]
       ]
     )
 
@@ -215,12 +245,12 @@ function initPlayer () {
       })
     }
 
-    const shareEl = document.getElementById("share")
-    if (shareEl) {
-      shareEl.addEventListener("click", () => {
+    const copyEl = document.getElementById("copy")
+    if (copyEl) {
+      copyEl.addEventListener("click", () => {
         const playerInfoEl = document.getElementById("playerInfo")
-        if (playerInfoEl) {
-          alert(baseURL + playerInfoEl.textContent)
+        if (playerInfoEl && playerInfoEl.textContent) {
+          copyToClipboard(playerInfoEl.textContent)
         }
       })
     }
