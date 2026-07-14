@@ -1603,8 +1603,13 @@ const printObj = {
     setActiveTab("artists")
     $("wrapper").classList.remove("searchActive")
     $("c2").style.display = "inline-block"
-    // Restore c3 in case the "Songs" tab had hidden it
+    // Restore c3 in case the "Songs" tab had hidden it, and clear it: the
+    // Artists tab lands with an empty song column (it fills only when an
+    // artist is selected), so drop any tracks left over from a previous
+    // playlist/artist view along with the playlist-only gutter class.
     $("c3").style.display = ""
+    $("c3").innerHTML = ""
+    $("c3").classList.remove("hasAddedDates")
     $("c4").innerHTML = ""
 
     ajax<Artist[]>("/artists", (artists) => {
