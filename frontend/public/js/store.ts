@@ -23,14 +23,16 @@ type Tab = "artists" | "songs" | "playlists"
 type PlaylistSort = "index" | "added-asc" | "added-desc"
 
 // Which track is loaded in the player, so matching artist (c2) and song (c3)
-// rows can be marked as playing. When playback started from a playlist,
-// `playlistId` + `playlistIndex` are set so prev/next can step through that
-// playlist rather than guessing from `currentTab`.
+// rows can be marked as playing. Playback context (so prev/next step through
+// the right list rather than guessing from `currentTab`) is carried by an
+// optional index field: `playlistId` + `playlistIndex` for a playlist, or
+// `searchIndex` (into store.searchQueue) for the global search results.
 interface PlayingRef {
   artistSlug: string
   songSlug: string
   playlistId?: string
   playlistIndex?: number
+  searchIndex?: number
 }
 
 // Catalog data backing the global search, fetched once when a search session
@@ -74,6 +76,10 @@ interface AppState {
   // Last query handleSearchInput acted on, so keyups that didn't change the
   // value (arrow keys, modifiers) don't re-render or re-route.
   lastSearchQuery: string
+  // Ordered snapshot of the playable song results, taken when a track is
+  // played from the search view, so prev/next (via currentlyPlaying.searchIndex)
+  // keep walking those results even after the query changes or is cleared.
+  searchQueue: Song[] | null
 }
 
 type StoreListener = () => void
@@ -125,6 +131,7 @@ const _store = createStore<AppState>({
   searchCatalog: null,
   searchCatalogLoading: false,
   lastSearchQuery: "",
+  searchQueue: null,
 })
 
 // The single source of truth. Read fields off it, and assign to a field to

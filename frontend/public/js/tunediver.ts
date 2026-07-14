@@ -381,6 +381,7 @@ function renderSearchResults(): void {
             `${item.track_artist || ""} — ${item.title} (${pct(score)})`,
           "data-search-type": "song",
           "data-song-id": songId,
+          "data-search-index": String(i),
           "data-artist-slug": artistSlug,
           "data-song-slug": item.slug,
         },
@@ -443,6 +444,22 @@ function renderSearchResults(): void {
     ).rootElement)
   }
 
+  // The playable song results, in display order, so playing one can snapshot
+  // this list as the search queue (store.searchQueue) for prev/next. Row
+  // `data-search-index` values index into it.
+  const shownSongs: Song[] = songs
+    .slice(0, SEARCH_LIMITS.songs)
+    .map(({ item }) => item)
+
+  // Start playback from a search song row, remembering the search results as
+  // the playback context so the transport prev/next walk them.
+  const playSearchRow = (row: HTMLElement): void => {
+    const idxAttr = row.getAttribute("data-search-index")
+    if (idxAttr === null) return
+    store.searchQueue = shownSongs
+    playSearchSong(parseInt(idxAttr, 10))
+  }
+
   // Property-assigned so re-renders (and the tab views, which assign their
   // own delegated handlers to c2) replace rather than stack. Guarded on
   // data-search-type so a stale handler no-ops on other views' rows.
@@ -477,7 +494,7 @@ function renderSearchResults(): void {
       const { song, artist } = songRegistry[songId]
       if (isPlay) {
         e.stopPropagation()
-        playSong(song, artist, false)
+        playSearchRow(row)
         return
       }
       highlight(row)
@@ -512,11 +529,7 @@ function renderSearchResults(): void {
     if (type === "artist") {
       playFirstArtistSong(row.getAttribute("data-artist-slug") || "")
     } else if (type === "song") {
-      const songId = row.getAttribute("data-song-id")
-      if (songId && songRegistry[songId]) {
-        const { song, artist } = songRegistry[songId]
-        playSong(song, artist, false)
-      }
+      playSearchRow(row)
     } else {
       const playlistId = row.getAttribute("data-playlist-id")
       if (playlistId) playFirstPlaylistTrack(playlistId)
@@ -635,7 +648,32 @@ function playAdjacentSong(direction: 1 | -1): void {
     return
   }
 
-  const { artistSlug, songSlug, playlistId, playlistIndex } = store.currentlyPlaying
+  const {
+    artistSlug, songSlug, playlistId, playlistIndex, searchIndex,
+  } = store.currentlyPlaying
+
+  // Search context overrides store.currentTab, like the playlist context does:
+  // prev/next step through the snapshotted search results (store.searchQueue),
+  // even if the query has since changed or the search view was left.
+  if (searchIndex !== undefined && store.searchQueue) {
+    const targetIdx = neighbourIndex(
+      searchIndex, direction, store.searchQueue.length
+    )
+    if (targetIdx === null) return
+    const target = playSearchSong(targetIdx)
+    if (!target) return
+    // If the search view is still shown, keep its highlight in sync.
+    const row = $("c2").querySelector(
+      `.row[data-search-index="${targetIdx}"]`
+    ) as HTMLElement | null
+    if (row) {
+      highlight(row)
+      row.scrollIntoView({ block: "nearest" })
+    }
+    const url = songPath(target.artist_slug || "", target.slug)
+    history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    return
+  }
 
   // Playlist context overrides store.currentTab: even if the user has navigated
   // away from the Playlists tab while a song plays, prev/next still walks
@@ -772,7 +810,29 @@ function randomFreshIndex(keys: string[], currentKey: string): number {
 // Used by prev/next and auto-advance while shuffle is enabled.
 function playRandomInContext(): void {
   if (!store.currentlyPlaying) return
-  const { artistSlug, songSlug, playlistId, playlistIndex } = store.currentlyPlaying
+  const {
+    artistSlug, songSlug, playlistId, playlistIndex, searchIndex,
+  } = store.currentlyPlaying
+
+  // Search context: shuffle picks a random track from the search queue.
+  if (searchIndex !== undefined && store.searchQueue) {
+    const queue = store.searchQueue
+    if (!queue.length) return
+    const keys = queue.map((s) => songKey(s.artist_slug || "", s.slug))
+    const pickIdx = randomFreshIndex(keys, songKey(artistSlug, songSlug))
+    const target = playSearchSong(pickIdx)
+    if (!target) return
+    const row = $("c2").querySelector(
+      `.row[data-search-index="${pickIdx}"]`
+    ) as HTMLElement | null
+    if (row) {
+      highlight(row)
+      row.scrollIntoView({ block: "nearest" })
+    }
+    const url = songPath(target.artist_slug || "", target.slug)
+    history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    return
+  }
 
   if (playlistId !== undefined && playlistIndex !== undefined) {
     ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
@@ -877,6 +937,22 @@ function playPlaylistTrack(
     store.currentlyPlaying.playlistId = playlistId
     store.currentlyPlaying.playlistIndex = index
   }
+}
+
+// Play the song at `index` in the current search queue (store.searchQueue) and
+// tag it with searchIndex so prev/next keep walking the search results. The
+// caller sets store.searchQueue before the first play; prev/next reuse it.
+// Returns the played song (or null if the index is out of range) so callers
+// can sync the search view.
+function playSearchSong(index: number): Song | null {
+  const queue = store.searchQueue
+  if (!queue || index < 0 || index >= queue.length) return null
+  const song = queue[index]
+  playSong(song, song.artist_slug || "", false)
+  if (store.currentlyPlaying) {
+    store.currentlyPlaying.searchIndex = index
+  }
+  return song
 }
 
 interface ScanStatus {
