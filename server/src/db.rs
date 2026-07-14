@@ -143,6 +143,22 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   if !column_exists(conn, "playlist_tracks", "added_at")? {
     conn.execute("ALTER TABLE playlist_tracks ADD COLUMN added_at TEXT", [])?;
   }
+  // Migrate databases whose playlist ids still carry the legacy `pl_` prefix
+  // (dropped in favour of bare hex ids). Ids are opaque, so stripping the
+  // prefix from both the parent row and its referencing tracks preserves every
+  // link; only externally bookmarked `pl_`-prefixed URLs stop resolving.
+  // Foreign-key enforcement is toggled off for the rewrite because
+  // `playlist_tracks.playlist_id` references `playlists(id)` with the default
+  // NO ACTION on update, which would otherwise reject repointing the key. If
+  // the process dies between the two UPDATEs the result still converges: a
+  // re-run skips the already-stripped parent and finishes the child rows.
+  conn.execute_batch(
+    "PRAGMA foreign_keys=OFF;
+     UPDATE playlists SET id = substr(id, 4) WHERE substr(id, 1, 3) = 'pl_';
+     UPDATE playlist_tracks SET playlist_id = substr(playlist_id, 4)
+       WHERE substr(playlist_id, 1, 3) = 'pl_';
+     PRAGMA foreign_keys=ON;",
+  )?;
   // Migrate databases created before the technical audio-property columns
   // existed. Existing rows get NULLs, which the detail endpoint backfills on
   // first view (see `get_track_properties`).
@@ -758,7 +774,7 @@ mod tests {
     let conn = pool.get().unwrap();
     let playlists = vec![
       crate::Playlist {
-        id: "pl_b".to_string(),
+        id: "b".to_string(),
         name: "Second".to_string(),
         tracks: vec![crate::TrackRef {
           artist: "Fred".to_string(),
@@ -769,7 +785,7 @@ mod tests {
         updated_at: 6,
       },
       crate::Playlist {
-        id: "pl_a".to_string(),
+        id: "a".to_string(),
         name: "First".to_string(),
         tracks: vec![
           crate::TrackRef {
@@ -795,7 +811,7 @@ mod tests {
     assert_eq!(names, vec!["Second", "First"]);
     // ...as is the per-playlist track order.
     let second = &loaded[1];
-    assert_eq!(second.id, "pl_a");
+    assert_eq!(second.id, "a");
     assert_eq!(second.created_at, 1);
     let tracks: Vec<(&str, &str)> = second
       .tracks
@@ -821,7 +837,7 @@ mod tests {
     save_playlists(
       &conn,
       &[crate::Playlist {
-        id: "pl_old".to_string(),
+        id: "old".to_string(),
         name: "Old".to_string(),
         tracks: vec![crate::TrackRef {
           artist: "X".to_string(),
@@ -837,7 +853,7 @@ mod tests {
     save_playlists(
       &conn,
       &[crate::Playlist {
-        id: "pl_new".to_string(),
+        id: "new".to_string(),
         name: "New".to_string(),
         tracks: vec![],
         created_at: 2,
@@ -848,12 +864,51 @@ mod tests {
 
     let loaded = load_playlists(&conn).unwrap();
     assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0].id, "pl_new");
+    assert_eq!(loaded[0].id, "new");
 
     // No orphaned playlist_tracks rows remain (ON DELETE CASCADE fired).
     let orphans: i64 = conn
       .query_row("SELECT COUNT(*) FROM playlist_tracks", [], |r| r.get(0))
       .unwrap();
     assert_eq!(orphans, 0);
+  }
+
+  #[test]
+  fn init_schema_strips_legacy_pl_prefix() {
+    let pool = temp_pool("pl_prefix_migration");
+    let conn = pool.get().unwrap();
+    // Simulate a pre-migration database by inserting rows that still carry the
+    // legacy `pl_` prefix, including a referencing playlist_tracks row. Foreign
+    // keys are on for this connection, so the child row must be inserted with a
+    // parent that exists.
+    conn
+      .execute(
+        "INSERT INTO playlists (id, name, created_at, updated_at, position)
+         VALUES ('pl_deadbeef', 'Legacy', 1, 1, 0)",
+        [],
+      )
+      .unwrap();
+    conn
+      .execute(
+        "INSERT INTO playlist_tracks
+           (playlist_id, position, artist, title, added_at)
+         VALUES ('pl_deadbeef', 0, 'A', 'One', NULL)",
+        [],
+      )
+      .unwrap();
+
+    // Re-running init_schema applies the one-time prefix-stripping migration.
+    init_schema(&conn).unwrap();
+
+    let loaded = load_playlists(&conn).unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].id, "deadbeef");
+    // The referencing track row was repointed to the stripped id, so the
+    // playlist still loads with its track intact.
+    assert_eq!(loaded[0].tracks.len(), 1);
+    let child_id: String = conn
+      .query_row("SELECT playlist_id FROM playlist_tracks", [], |r| r.get(0))
+      .unwrap();
+    assert_eq!(child_id, "deadbeef");
   }
 }

@@ -701,7 +701,7 @@ fn generate_playlist_id() -> String {
     .duration_since(UNIX_EPOCH)
     .map(|d| d.as_nanos())
     .unwrap_or(0);
-  format!("pl_{:x}", nanos)
+  format!("{nanos:x}")
 }
 
 // Parse a legacy playlists.json file into playlists for one-time import.
