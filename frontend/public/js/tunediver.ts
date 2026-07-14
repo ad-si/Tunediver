@@ -100,16 +100,20 @@ function updatePlayingMarkers(): void {
   const artistSlug = currentlyPlaying.artistSlug
   const songSlug = currentlyPlaying.songSlug
 
+  // Artist rows carry only an artist slug; song rows (artist tab's c3, the
+  // songs tab's flat list in c2, and search results) also carry a song slug,
+  // so exclude them here to avoid marking the wrong song by the same artist.
   const artistRow = document.querySelector(
     `#c2 .row[data-artist-slug="${CSS.escape(artistSlug)}"]`
+    + `:not([data-song-slug])`
   )
   if (artistRow) artistRow.classList.add("playing")
 
-  const songRow = document.querySelector(
-    `#c3 .row[data-artist-slug="${CSS.escape(artistSlug)}"]`
+  const songSelector =
+    `.row[data-artist-slug="${CSS.escape(artistSlug)}"]`
     + `[data-song-slug="${CSS.escape(songSlug)}"]`
-  )
-  if (songRow) songRow.classList.add("playing")
+  document.querySelectorAll(`#c2 ${songSelector}, #c3 ${songSelector}`)
+    .forEach((row) => row.classList.add("playing"))
 }
 
 // Simple fuzzy match: checks whether all characters of the query appear
