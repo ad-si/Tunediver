@@ -479,6 +479,17 @@ h3 {
   margin: 24px auto;
 }
 
+/* The spinner is an <img>, so in the cover column the `#c4 img` cover styling
+   (160px, loader.gif background, box-shadow) would otherwise apply and blow it
+   up. Keep it at its small intrinsic size wherever it lands. */
+#c4 img.spinner {
+  width: 20px;
+  height: 20px;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 /* Pin each pane to its grid column. Without this, hiding c3 (the songs tab
    and the search-results view do) removes its box from the grid and c4
    auto-places into c3's fit-content track, getting squeezed to its 300px
