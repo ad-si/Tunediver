@@ -249,12 +249,6 @@ h3 {
   cursor: pointer;
 }
 
-#logo img {
-  margin-left: 5px;
-  height: 20px;
-  width: 20px;
-}
-
 /* The player controls (#controls and its children: play/previous/next,
    progress bar, volume, shuffle/repeat/share, etc.) live entirely in
    player.css, which loads after this file. Their responsive behaviour is
@@ -471,6 +465,18 @@ h3 {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
+}
+
+/* Per-action loading spinner: ajaxRequest drops one of these into the column
+   that is about to receive the content, so the wait shows up exactly where the
+   result will land. Sized at its intrinsic 20px and centred near the top of
+   the column rather than vertically centred, so it sits where the first rows
+   will appear. */
+.spinner {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 24px auto;
 }
 
 /* Pin each pane to its grid column. Without this, hiding c3 (the songs tab

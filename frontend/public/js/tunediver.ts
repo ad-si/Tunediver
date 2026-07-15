@@ -1488,13 +1488,14 @@ function navigateList(direction: 1 | -1): boolean {
 
 function ajax<T>(
   url: string,
-  func: (data: T) => void
+  func: (data: T) => void,
+  spinnerTarget?: HTMLElement
 ): void {
   // GET responses are expected to carry a `data` body, but ajaxRequest's
   // signature allows undefined (for 204 No Content). Narrow here.
   ajaxRequest<T>("GET", url, null, (data) => {
     if (data !== undefined) func(data)
-  })
+  }, undefined, spinnerTarget)
 }
 
 // Non-GET equivalent of `ajax`. Body is JSON-serialised. Success callback
@@ -1511,23 +1512,46 @@ function ajaxMutate<T>(
   ajaxRequest<T>(method, url, body, func, onError)
 }
 
+// A rotating loading spinner shown in place of the content it is loading, so
+// each action (opening a tab, an artist, a playlist…) gets feedback exactly
+// where its result will appear. Freshly built per request since several can be
+// in flight in different columns at once. Black glyph; centred by `.spinner`.
+const SPINNER_SVG =
+  "data:image/svg+xml,%3C?xml%20version=%221.0%22%20encoding=%22utf-8%22?%3E%3Csvg%20width=%2220%22%20height=%2220%22%20xmlns=%22http://www.w3.org/2000/svg%22%20xmlns:xlink=%22http://www.w3.org/1999/xlink%22%3E%3Cdefs%3E%3Crect%20id=%22l%22%20x=%222%22%20y=%22-1%22%20rx=%221%22%20ry=%221%22%20width=%228%22%20height=%222%22%20fill=%22%23000%22%3E%3C/rect%3E%3C/defs%3E%3Cg%20transform=%22translate(10,%2010)%22%3E%3CanimateTransform%20attributeName=%22transform%22%20calcMode=%22discrete%22%20type=%22rotate%22%20values=%220;30;60;90;120;150;180;210;240;270;300;330;360%22%20additive=%22sum%22%20dur=%221000ms%22%20repeatDur=%22indefinite%22%3E%3C/animateTransform%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(0)%22%20opacity=%220%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(30)%22%20opacity=%220.08%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(60)%22%20opacity=%220.17%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(90)%22%20opacity=%220.25%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(120)%22%20opacity=%220.33%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(150)%22%20opacity=%220.42%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(180)%22%20opacity=%220.5%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(210)%22%20opacity=%220.58%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(240)%22%20opacity=%220.67%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(270)%22%20opacity=%220.75%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(300)%22%20opacity=%220.83%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(330)%22%20opacity=%220.92%22%3E%3C/use%3E%3C/g%3E%3C/svg%3E"
+
+function makeSpinner(): HTMLImageElement {
+  const img = document.createElement("img")
+  img.className = "spinner"
+  img.src = SPINNER_SVG
+  img.alt = "Loading"
+  return img
+}
+
 function ajaxRequest<T>(
   method: string,
   url: string,
   body: unknown,
   func: (data: T | undefined) => void,
-  onError?: (status: number) => void
+  onError?: (status: number) => void,
+  spinnerTarget?: HTMLElement
 ): void {
   const base = "/api"
   const x = new XMLHttpRequest()
   const path = base + url
 
-  // Show loading spinner only if the request takes noticeable time,
-  // to avoid a flash on fast responses
-  const spinnerEl = $("spinner")
-  const spinnerTimeout = window.setTimeout(() => {
-    spinnerEl.style.display = "inline-block"
-  }, 200)
+  // Show a spinner inside the target column only if the request takes
+  // noticeable time, to avoid a flash on fast responses. On the 200 ms mark the
+  // column is cleared and the spinner takes the content's place; a response
+  // that beats the timer never clears the column, so the caller's own render
+  // (which clears then repopulates) happens without any intermediate blank.
+  let spinnerEl: HTMLImageElement | null = null
+  const spinnerTimeout = spinnerTarget
+    ? window.setTimeout(() => {
+        spinnerTarget.innerHTML = ""
+        spinnerEl = makeSpinner()
+        spinnerTarget.appendChild(spinnerEl)
+      }, 200)
+    : undefined
 
   x.open(method, path, true)
   if (body !== null && body !== undefined) {
@@ -1536,8 +1560,11 @@ function ajaxRequest<T>(
 
   x.onreadystatechange = function(): void {
     if (x.readyState !== 4) return
-    window.clearTimeout(spinnerTimeout)
-    spinnerEl.style.display = "none"
+    if (spinnerTimeout !== undefined) window.clearTimeout(spinnerTimeout)
+    if (spinnerEl) {
+      spinnerEl.remove()
+      spinnerEl = null
+    }
 
     // 2xx — success. 204 (No Content) has no body, so skip parsing.
     if (x.status >= 200 && x.status < 300) {
@@ -1815,7 +1842,7 @@ const printObj = {
       })
 
       updatePlayingMarkers()
-    })
+    }, $("c2"))
   },
 
   artist(slug: string): void {
@@ -1849,7 +1876,7 @@ const printObj = {
           ]
         ]
       )
-    })
+    }, $("c4"))
   },
 
   songs(artistSlug: string): void {
@@ -1960,7 +1987,7 @@ const printObj = {
           return false
         }
       }
-    })
+    }, $("c3"))
   },
 
   song(songSlug: string, artistSlug: string): void {
@@ -2085,7 +2112,7 @@ const printObj = {
           }
         }
       }
-    })
+    }, $("c4"))
   },
 
   startpage(): void {
@@ -2194,7 +2221,7 @@ const printObj = {
           }
         }
       }
-    })
+    }, $("c2"))
   },
 
   // List view in c2: all playlists, with a "+ New playlist" row at the top
@@ -2214,21 +2241,26 @@ const printObj = {
     $("c2").style.display = "inline-block"
     $("c3").style.display = ""
 
-    // Build standalone and appendChild — shaven's parent-syntax returns the
-    // parent as rootElement, so attaching the handler to that would bind it
-    // to c2 itself and fire on every click that bubbles through it.
-    const newRow = shaven(
-      ["div#.row.newPlaylist",
-        ["a", "+ New playlist"]
-      ]
-    ).rootElement
-    newRow.addEventListener("click", (e: Event) => {
-      e.preventDefault()
-      createPlaylistFlow()
-    })
-    $("c2").appendChild(newRow)
-
     ajax<PlaylistSummary[]>("/playlists", (playlists) => {
+      // Built inside the callback (not before the request) so the loading
+      // spinner can own the empty column while the list loads; the spinner
+      // clears c2 when it appears, which would otherwise drop this row.
+      $("c2").innerHTML = ""
+
+      // Build standalone and appendChild — shaven's parent-syntax returns the
+      // parent as rootElement, so attaching the handler to that would bind it
+      // to c2 itself and fire on every click that bubbles through it.
+      const newRow = shaven(
+        ["div#.row.newPlaylist",
+          ["a", "+ New playlist"]
+        ]
+      ).rootElement
+      newRow.addEventListener("click", (e: Event) => {
+        e.preventDefault()
+        createPlaylistFlow()
+      })
+      $("c2").appendChild(newRow)
+
       playlists
         .slice()
         .sort((a, b) =>
@@ -2265,7 +2297,7 @@ const printObj = {
         })
 
       updatePlayingMarkers()
-    })
+    }, $("c2"))
   },
 
   // Detail of a single playlist: tracks in c3, metadata/rename/delete in c4.
@@ -2456,7 +2488,7 @@ const printObj = {
       }
 
       updatePlayingMarkers()
-    })
+    }, $("c3"))
   },
 
   // List view in c2: every genre found in the catalog's tags. Clicking a
@@ -2514,7 +2546,7 @@ const printObj = {
         })
 
       updatePlayingMarkers()
-    })
+    }, $("c2"))
   },
 
   // Songs of a single genre in c3 (labelled "Artist — Title" since a genre
@@ -2622,7 +2654,7 @@ const printObj = {
           ]
         ]
       )
-    })
+    }, $("c3"))
   },
 }
 
@@ -2641,12 +2673,7 @@ function viewController(): Record<string, Function> {
         [document.body,
           ["div#wrapper",
             ["nav#nav",
-              ["h1#logo", "Tunediver",
-                ["img#spinner", {
-                  "src": "data:image/svg+xml,%3C?xml%20version=%221.0%22%20encoding=%22utf-8%22?%3E%3Csvg%20width=%2220%22%20height=%2220%22%20xmlns=%22http://www.w3.org/2000/svg%22%20xmlns:xlink=%22http://www.w3.org/1999/xlink%22%3E%3Cdefs%3E%3Crect%20id=%22l%22%20x=%222%22%20y=%22-1%22%20rx=%221%22%20ry=%221%22%20width=%228%22%20height=%222%22%20fill=%22%23fff%22%3E%3C/rect%3E%3C/defs%3E%3Cg%20transform=%22translate(10,%2010)%22%3E%3CanimateTransform%20attributeName=%22transform%22%20calcMode=%22discrete%22%20type=%22rotate%22%20values=%220;30;60;90;120;150;180;210;240;270;300;330;360%22%20additive=%22sum%22%20dur=%221000ms%22%20repeatDur=%22indefinite%22%3E%3C/animateTransform%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(0)%22%20opacity=%220%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(30)%22%20opacity=%220.08%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(60)%22%20opacity=%220.17%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(90)%22%20opacity=%220.25%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(120)%22%20opacity=%220.33%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(150)%22%20opacity=%220.42%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(180)%22%20opacity=%220.5%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(210)%22%20opacity=%220.58%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(240)%22%20opacity=%220.67%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(270)%22%20opacity=%220.75%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(300)%22%20opacity=%220.83%22%3E%3C/use%3E%3Cuse%20xlink:href=%22%23l%22%20transform=%22rotate(330)%22%20opacity=%220.92%22%3E%3C/use%3E%3C/g%3E%3C/svg%3E",
-                  "style": "display:none"}
-                ]
-              ],
+              ["h1#logo", "Tunediver"],
               ["div#controls"],
               ["button#settings", { "title": "Settings" }]
             ],
