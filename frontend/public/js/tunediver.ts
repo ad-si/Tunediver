@@ -657,7 +657,7 @@ function playAdjacentSong(direction: 1 | -1): void {
   }
 
   const {
-    artistSlug, songSlug, playlistId, playlistIndex, searchIndex,
+    artistSlug, songSlug, playlistId, playlistIndex, searchIndex, genreSlug,
   } = store.currentlyPlaying
 
   // Search context overrides store.currentTab, like the playlist context does:
@@ -709,6 +709,26 @@ function playAdjacentSong(direction: 1 | -1): void {
       }
       printObj.song(target.slug, target.artist_slug)
       const url = `playlists/${playlist.id}/${targetIdx}`
+      history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    })
+    return
+  }
+
+  // Genre context likewise overrides store.currentTab: prev/next step through
+  // the (alphabetical) song list of the genre playback started from.
+  if (genreSlug !== undefined) {
+    ajax<Song[]>(`/genres/${genreSlug}/songs`, (songs) => {
+      const idx = songs.findIndex((s) =>
+        s.slug === songSlug && (s.artist_slug || "") === artistSlug
+      )
+      if (idx === -1) return
+      const targetIdx = neighbourIndex(idx, direction, songs.length)
+      if (targetIdx === null) return
+      const target = songs[targetIdx]
+      playGenreSong(genreSlug, target)
+      highlightGenreRow(target)
+      printObj.song(target.slug, target.artist_slug || "")
+      const url = songPath(target.artist_slug || "", target.slug)
       history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
     })
     return
@@ -825,7 +845,7 @@ function randomFreshIndex(keys: string[], currentKey: string): number {
 function playRandomInContext(): void {
   if (!store.currentlyPlaying) return
   const {
-    artistSlug, songSlug, playlistId, playlistIndex, searchIndex,
+    artistSlug, songSlug, playlistId, playlistIndex, searchIndex, genreSlug,
   } = store.currentlyPlaying
 
   // Search context: shuffle picks a random track from the search queue.
@@ -874,6 +894,24 @@ function playRandomInContext(): void {
       printObj.song(pick.track.slug, pick.track.artist_slug)
       const url = `playlists/${playlist.id}/${pick.index}`
       history.pushState({ "url": url }, pick.track.slug, baseURL + "/" + url)
+    })
+    return
+  }
+
+  // Genre context: shuffle picks a random not-recently-played track from the
+  // genre's song list.
+  if (genreSlug !== undefined) {
+    ajax<Song[]>(`/genres/${genreSlug}/songs`, (songs) => {
+      if (!songs.length) return
+      const keys = songs.map((s) => songKey(s.artist_slug || "", s.slug))
+      const target = songs[
+        randomFreshIndex(keys, songKey(artistSlug, songSlug))
+      ]
+      playGenreSong(genreSlug, target)
+      highlightGenreRow(target)
+      printObj.song(target.slug, target.artist_slug || "")
+      const url = songPath(target.artist_slug || "", target.slug)
+      history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
     })
     return
   }
@@ -960,6 +998,22 @@ function playGenreSong(genreSlug: string, song: Song): void {
   playSong(song, song.artist_slug || "", false)
   if (store.currentlyPlaying) {
     store.currentlyPlaying.genreSlug = genreSlug
+  }
+}
+
+// If a genre's song list is still shown in c3, keep its highlight in sync
+// with what's playing. Genre rows are identified by their registry-id prefix,
+// so rows from the artist or playlist views (which carry the same slug
+// attributes) never match.
+function highlightGenreRow(song: Song): void {
+  const row = $("c3").querySelector(
+    `.row[data-song-id^="genre-song-"]`
+    + `[data-artist-slug="${CSS.escape(song.artist_slug || "")}"]`
+    + `[data-song-slug="${CSS.escape(song.slug)}"]`
+  ) as HTMLElement | null
+  if (row) {
+    highlight(row)
+    row.scrollIntoView({ block: "nearest" })
   }
 }
 
