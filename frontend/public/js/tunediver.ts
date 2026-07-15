@@ -296,6 +296,12 @@ function playFirstArtistSong(artistSlug: string): void {
   })
 }
 
+function playFirstGenreSong(genreSlug: string): void {
+  ajax<Song[]>(`/genres/${genreSlug}/songs`, (songs) => {
+    if (songs.length) playGenreSong(genreSlug, songs[0])
+  })
+}
+
 function playFirstPlaylistTrack(id: string): void {
   ajax<Playlist>(`/playlists/${id}`, (full) => {
     const idx = full.tracks.findIndex((t) => t.available)
@@ -944,6 +950,16 @@ function playPlaylistTrack(
   if (store.currentlyPlaying) {
     store.currentlyPlaying.playlistId = playlistId
     store.currentlyPlaying.playlistIndex = index
+  }
+}
+
+// Wrap playSong with genre-context tracking so prev/next, shuffle, and
+// auto-advance walk the genre's song list. Patched after `playSong` sets
+// store.currentlyPlaying because playSong itself has no notion of genres.
+function playGenreSong(genreSlug: string, song: Song): void {
+  playSong(song, song.artist_slug || "", false)
+  if (store.currentlyPlaying) {
+    store.currentlyPlaying.genreSlug = genreSlug
   }
 }
 
@@ -2388,6 +2404,172 @@ const printObj = {
       updatePlayingMarkers()
     })
   },
+
+  // List view in c2: every genre found in the catalog's tags. Clicking a
+  // genre lists its songs in c3; double-clicking plays the genre's first song.
+  genres(): void {
+    store.currentTab = "genres"
+    setActiveTab("genres")
+    $("wrapper").classList.remove("searchActive")
+    $("wrapper").classList.remove("songsActive")
+    // The list view has no open genre yet; printObj.genreSongs re-adds the
+    // wide-c3 layout when one is selected.
+    $("wrapper").classList.remove("playlistActive")
+    $("c2").style.display = "inline-block"
+    $("c3").style.display = ""
+    $("c3").innerHTML = ""
+    $("c3").classList.remove("hasAddedDates")
+    $("c4").innerHTML = ""
+
+    ajax<Genre[]>("/genres", (genres) => {
+      $("c2").innerHTML = ""
+
+      genres
+        .sort((genreA, genreB) =>
+          genreA.name.toLowerCase().localeCompare(genreB.name.toLowerCase())
+        )
+        .forEach((genre) => {
+          const link = shaven(["a", genre.name]).rootElement
+
+          link.addEventListener("click", (e: Event) => {
+            e.preventDefault()
+            const parentElement = link.parentNode as HTMLElement
+            if (parentElement) highlight(parentElement)
+
+            printObj.genreSongs(genre.slug)
+
+            const url = "genres/" + genre.slug
+            history.pushState({ "url": url }, genre.name, baseURL + "/" + url)
+          })
+
+          link.addEventListener("dblclick", (e: Event) => {
+            e.preventDefault()
+            e.stopPropagation()
+            playFirstGenreSong(genre.slug)
+          })
+
+          const container = shaven(
+            ["div#.row", {
+              "title": genre.name,
+              "data-genre-slug": genre.slug},
+              [link]
+            ]
+          ).rootElement
+
+          $("c2").appendChild(container)
+        })
+
+      updatePlayingMarkers()
+    })
+  },
+
+  // Songs of a single genre in c3 (labelled "Artist — Title" since a genre
+  // spans many artists), with the genre's name and track count in c4.
+  genreSongs(genreSlug: string): void {
+    ajax<Song[]>(`/genres/${genreSlug}/songs`, (songs) => {
+      $("c3").innerHTML = ""
+      $("c3").style.display = ""
+      // Widen c3 past the 300px cap for the long "Artist — Title" rows,
+      // exactly like an open playlist's track list.
+      $("wrapper").classList.remove("songsActive")
+      $("wrapper").classList.add("playlistActive")
+
+      songs.forEach((song, index) => {
+        const artistSlug = song.artist_slug || ""
+        const songId = `genre-song-${genreSlug}-${index}-${song.id || 0}`
+
+        songRegistry[songId] = {
+          song: song,
+          artist: artistSlug,
+        }
+
+        const link = shaven(
+          ["a", songLabel(song.track_artist, song.title)]
+        ).rootElement
+        const play = shaven(["button#.play"]).rootElement
+
+        shaven(
+          [$("c3"),
+            ["div#.row", {
+              "title": (song.track_artist || "") + " — " + song.title,
+              "data-song-id": songId,
+              "data-artist-slug": artistSlug,
+              "data-song-slug": song.slug,
+            },
+              [play],
+              [link],
+            ]
+          ]
+        )
+      })
+
+      updatePlayingMarkers()
+
+      // Same delegated handlers as the artist tab's song list (printObj.songs),
+      // but playback goes through playGenreSong so prev/next, shuffle, and
+      // auto-advance stay inside this genre. Property-assigned so re-renders
+      // replace rather than stack them.
+      const container = $("c3")
+
+      container.ondblclick = (e) => {
+        const target = e.target as HTMLElement
+        const songDiv = target.closest(".row") as HTMLElement | null
+        if (!songDiv || !songDiv.hasAttribute("data-song-id")) return
+        e.preventDefault()
+        e.stopPropagation()
+        const songId = songDiv.getAttribute("data-song-id")
+        if (songId && songRegistry[songId]) {
+          playGenreSong(genreSlug, songRegistry[songId].song)
+        }
+      }
+
+      container.onclick = (e) => {
+        const target = e.target as HTMLElement
+        const songDiv = target.closest(".row") as HTMLElement | null
+        if (!songDiv || !songDiv.hasAttribute("data-song-id")) return
+
+        if (target.classList.contains("play")) {
+          e.preventDefault()
+          e.stopPropagation()
+          const songId = songDiv.getAttribute("data-song-id")
+          if (songId && songRegistry[songId]) {
+            playGenreSong(genreSlug, songRegistry[songId].song)
+          }
+          return
+        }
+
+        if (target.tagName.toLowerCase() === "a") {
+          e.preventDefault()
+          highlight(songDiv)
+          const songId = songDiv.getAttribute("data-song-id")
+          if (songId && songRegistry[songId]) {
+            const { song, artist } = songRegistry[songId]
+            printObj.song(song.slug, artist)
+            // A song has one canonical URL (under its artist), so the genre
+            // view links there rather than minting a genre-scoped variant.
+            const url = songPath(artist, song.slug)
+            history.pushState({ "url": url }, song.slug, baseURL + "/" + url)
+          }
+        }
+      }
+
+      // Detail column: genre name + track count (replaced by the song detail
+      // once a song is clicked, like the artist portrait is).
+      $("c4").innerHTML = ""
+      shaven(
+        [$("c4"),
+          ["div#genreDetail",
+            ["nav#genreNav",
+              ["h2#heading", decodeURIComponent(genreSlug)],
+              ["p#genreCount",
+                songs.length === 1 ? "1 track" : songs.length + " tracks"
+              ],
+            ],
+          ]
+        ]
+      )
+    })
+  },
 }
 
 function viewController(): Record<string, Function> {
@@ -2422,7 +2604,8 @@ function viewController(): Record<string, Function> {
               ["input#search", {type: "search", placeholder: "search"}],
               ["button#artists", "Artists"],
               ["button#songs", "Songs"],
-              ["button#playlists", "Playlists"]
+              ["button#playlists", "Playlists"],
+              ["button#genres", "Genres"]
             ],
             ["div#c2"],
             ["div#c3"],
@@ -2516,6 +2699,14 @@ function viewController(): Record<string, Function> {
         )
       })
 
+      $("genres").addEventListener("click", () => {
+        clearSearch()
+        printObj.genres()
+        history.pushState(
+          { "url": "genres" }, "Genres", baseURL + "/genres"
+        )
+      })
+
       $("reload").addEventListener("click", (e: Event) => {
         e.stopPropagation()
         reloadCatalog()
@@ -2586,6 +2777,15 @@ function viewController(): Record<string, Function> {
       printObj.playlists()
     },
 
+    genres(): void {
+      printObj.genres()
+    },
+
+    genre(slug: string): void {
+      printObj.genres()
+      printObj.genreSongs(slug)
+    },
+
     playlist(id: string): void {
       printObj.playlists()
       printObj.playlist(id)
@@ -2643,6 +2843,18 @@ function route(state: string | { url?: string }): void {
       if (dirs.length === 1) view.playlists()
       else if (dirs.length === 2) view.playlist(dirs[1])
       else if (dirs.length === 3) view.playlistTrack(dirs[1], dirs[2])
+      else {
+        alert("This website is not available")
+        throw new Error("Can not route the URL " + url)
+      }
+      return
+    }
+
+    //   /genres         → genres tab
+    //   /genres/<genre> → one genre's song list
+    if (dirs[0] === "genres") {
+      if (dirs.length === 1) view.genres()
+      else if (dirs.length === 2) view.genre(dirs[1])
       else {
         alert("This website is not available")
         throw new Error("Can not route the URL " + url)

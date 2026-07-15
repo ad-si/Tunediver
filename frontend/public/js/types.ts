@@ -31,6 +31,11 @@ type Artist = {
   bio?: string
 }
 
+type Genre = {
+  name: string
+  slug: string
+}
+
 type ApiResponse<T> = {
   error?: boolean
   data?: T

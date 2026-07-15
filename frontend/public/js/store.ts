@@ -14,7 +14,7 @@
 
 type PlayState = "playing" | "paused"
 type RepeatMode = "off" | "all" | "one"
-type Tab = "artists" | "songs" | "playlists"
+type Tab = "artists" | "songs" | "playlists" | "genres"
 
 // How an open playlist's tracks are ordered for display. "index" keeps the
 // stored playlist order; the "added-*" modes sort by the per-track Added At
@@ -25,14 +25,16 @@ type PlaylistSort = "index" | "added-asc" | "added-desc"
 // Which track is loaded in the player, so matching artist (c2) and song (c3)
 // rows can be marked as playing. Playback context (so prev/next step through
 // the right list rather than guessing from `currentTab`) is carried by an
-// optional index field: `playlistId` + `playlistIndex` for a playlist, or
-// `searchIndex` (into store.searchQueue) for the global search results.
+// optional field: `playlistId` + `playlistIndex` for a playlist, `searchIndex`
+// (into store.searchQueue) for the global search results, or `genreSlug` for
+// a genre's song list.
 interface PlayingRef {
   artistSlug: string
   songSlug: string
   playlistId?: string
   playlistIndex?: number
   searchIndex?: number
+  genreSlug?: string
 }
 
 // Catalog data backing the global search, fetched once when a search session

@@ -38,6 +38,11 @@ struct Track {
   // so the rest of the app never has to re-split a credit string.
   artists: Vec<String>,
   title: String,
+  // Every genre the track is tagged with, resolved from the GENRE tag(s) the
+  // same way artists are (multiple fields and delimited strings both yield a
+  // flat list). Empty when the file carries no genre tag — such tracks simply
+  // don't surface in the genre browser.
+  genres: Vec<String>,
   path: PathBuf,
   // URL slug key that `find_track` resolves back to this track. Normally the
   // plain title; when several files share the same (artist, title) it carries
@@ -127,6 +132,18 @@ fn artists_match(artists: &[String], query: &str) -> bool {
   parts.len() > 1 && parts == artists
 }
 
+// Split a genre tag value into individual genres. Genre names — unlike artist
+// names ("AC/DC", "Grover Washington, Jr.") — contain neither slashes nor
+// commas, so all the delimiters seen in the wild ("Rock/Pop", "Rock, Pop",
+// "Rock; Pop") can be treated as separators without a surrounding-space rule.
+fn split_genres(genre: &str) -> Vec<String> {
+  genre
+    .split(['/', ';', ','])
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .collect()
+}
+
 // A single, human-readable credit line for a track's artists. Also serves as
 // the stable identity a playlist track ref is keyed by. Uses ", " because it
 // reads naturally and `split_artists` never treats a comma as a separator (so
@@ -145,22 +162,27 @@ fn primary_artist(artists: &[String]) -> &str {
     .unwrap_or(UNKNOWN_ARTIST)
 }
 
-// Read the credited artists and title from the file's embedded tags. Each
-// ARTIST field is split on the recognized separators and the results are
-// flattened, so a file that stores collaborators as separate fields *or* as
-// one delimited string both yield the same fully-resolved list. Falls back to
-// ["Unknown Artist"] / "Unknown Title" when tags are missing or unreadable;
-// never consults the filename or directory name.
-fn read_track_tags(path: &Path) -> (Vec<String>, String) {
+// Read the credited artists, title, and genres from the file's embedded tags.
+// Each ARTIST/GENRE field is split on the recognized separators and the
+// results are flattened, so a file that stores multiple values as separate
+// fields *or* as one delimited string both yield the same fully-resolved
+// list. Falls back to ["Unknown Artist"] / "Unknown Title" when tags are
+// missing or unreadable (genres stay empty — no placeholder); never consults
+// the filename or directory name.
+fn read_track_tags(path: &Path) -> (Vec<String>, String, Vec<String>) {
   let tagged = match read_from_path(path) {
     Ok(t) => t,
     Err(_) => {
-      return (vec![UNKNOWN_ARTIST.to_string()], UNKNOWN_TITLE.to_string())
+      return (
+        vec![UNKNOWN_ARTIST.to_string()],
+        UNKNOWN_TITLE.to_string(),
+        Vec::new(),
+      )
     }
   };
 
   let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-  let (artists, title) = match tag {
+  let (artists, title, genres) = match tag {
     Some(t) => {
       // `Accessor::artist()` yields only the first ARTIST value, silently
       // dropping the rest on files (notably Opus/Vorbis comments) that store
@@ -171,12 +193,18 @@ fn read_track_tags(path: &Path) -> (Vec<String>, String) {
         .get_strings(lofty::tag::ItemKey::TrackArtist)
         .flat_map(split_artists)
         .collect();
+      // GENRE fields get the same treatment (via the genre separator set).
+      let genres: Vec<String> = t
+        .get_strings(lofty::tag::ItemKey::Genre)
+        .flat_map(split_genres)
+        .collect();
       (
         artists,
         t.title().map(|s| s.to_string()).unwrap_or_default(),
+        genres,
       )
     }
-    None => (Vec::new(), String::new()),
+    None => (Vec::new(), String::new(), Vec::new()),
   };
 
   // An empty list (no/blank ARTIST tags) falls back to the placeholder so the
@@ -194,7 +222,7 @@ fn read_track_tags(path: &Path) -> (Vec<String>, String) {
   } else {
     title.trim().to_string()
   };
-  (artists, title)
+  (artists, title, genres)
 }
 
 // Look up lyrics from whichever tag the file carries, if any.
@@ -507,7 +535,7 @@ fn run_scan(
       }
     }
 
-    let (artists, title) = read_track_tags(path);
+    let (artists, title, genres) = read_track_tags(path);
     let lyrics = read_track_lyrics(path);
     let date_added = read_id3v2_user_text(path, "DATE_ADDED");
     let (has_cover, cover_blob, cover_mime) = read_cover(path);
@@ -518,6 +546,7 @@ fn run_scan(
       size,
       artists,
       title,
+      genres,
       lyrics,
       date_added,
       has_cover,
@@ -597,6 +626,35 @@ impl Catalog {
         slug: encode(&name),
         name,
       })
+      .collect()
+  }
+
+  // Unique genres, sorted via BTreeSet ordering. IDs are sequential in the
+  // returned slice. Tracks without a genre tag contribute nothing.
+  fn list_genres(&self) -> Vec<Genre> {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for track in &self.tracks {
+      for name in &track.genres {
+        names.insert(name.clone());
+      }
+    }
+    names
+      .into_iter()
+      .enumerate()
+      .map(|(i, name)| Genre {
+        id: i,
+        slug: encode(&name),
+        name,
+      })
+      .collect()
+  }
+
+  // Tracks tagged with `genre`, in catalog order.
+  fn tracks_by_genre(&self, genre: &str) -> Vec<&Track> {
+    self
+      .tracks
+      .iter()
+      .filter(|t| t.genres.iter().any(|g| g == genre))
       .collect()
   }
 
@@ -844,6 +902,21 @@ struct ArtistResponse {
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
+struct Genre {
+  id: usize,
+  name: String,
+  slug: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct GenreResponse {
+  error: bool,
+  data: Vec<Genre>,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
 struct Song {
   id: usize,
   title: String,
@@ -938,6 +1011,44 @@ fn get_artists(config: &State<AppConfig>) -> Json<ArtistResponse> {
 fn get_all_songs(config: &State<AppConfig>) -> Json<SongResponse> {
   let catalog = config.catalog.read().unwrap();
   let mut songs: Vec<Song> = catalog.tracks.iter().map(track_to_song).collect();
+  songs.sort_by(|a, b| {
+    a.title
+      .to_lowercase()
+      .cmp(&b.title.to_lowercase())
+      .then_with(|| {
+        a.track_artist
+          .to_lowercase()
+          .cmp(&b.track_artist.to_lowercase())
+      })
+  });
+  Json(SongResponse { data: songs })
+}
+
+#[get("/genres")]
+fn get_genres(config: &State<AppConfig>) -> Json<GenreResponse> {
+  Json(GenreResponse {
+    error: false,
+    data: config.catalog.read().unwrap().list_genres(),
+  })
+}
+
+// All songs tagged with `genre`, sorted alphabetically by title then artist
+// (case-insensitive) — like /songs, since a genre spans many artists.
+#[get("/genres/<genre>/songs")]
+fn get_genre_songs(
+  genre: &str,
+  config: &State<AppConfig>,
+) -> Json<SongResponse> {
+  let decoded_genre = urlencoding::decode(genre)
+    .map(|s| s.into_owned())
+    .unwrap_or_else(|_| genre.to_string());
+
+  let catalog = config.catalog.read().unwrap();
+  let mut songs: Vec<Song> = catalog
+    .tracks_by_genre(&decoded_genre)
+    .into_iter()
+    .map(track_to_song)
+    .collect();
   songs.sort_by(|a, b| {
     a.title
       .to_lowercase()
@@ -1783,6 +1894,8 @@ fn rocket() -> _ {
       "/api",
       routes![
         get_artists,
+        get_genres,
+        get_genre_songs,
         get_all_songs,
         get_artist_songs,
         get_artist_info,
@@ -1928,10 +2041,24 @@ mod tests {
   fn read_track_tags_returns_unknown_artist_for_unreadable_file() {
     // A path that can't be parsed as audio falls back to the placeholders
     // rather than borrowing identity from the filename.
-    let (artists, title) =
+    let (artists, title, genres) =
       read_track_tags(Path::new("/nonexistent/not-audio.mp3"));
     assert_eq!(artists, vec!["Unknown Artist".to_string()]);
     assert_eq!(title, "Unknown Title");
+    assert!(genres.is_empty(), "no placeholder genre is invented");
+  }
+
+  #[test]
+  fn split_genres_handles_all_common_separators() {
+    for tag in ["Rock/Pop", "Rock, Pop", "Rock; Pop", "Rock /Pop"] {
+      assert_eq!(
+        split_genres(tag),
+        vec!["Rock".to_string(), "Pop".to_string()],
+        "failed for {tag:?}"
+      );
+    }
+    assert_eq!(split_genres("Drum'n'Bass"), vec!["Drum'n'Bass".to_string()]);
+    assert!(split_genres("  ").is_empty());
   }
 
   #[test]
@@ -1940,6 +2067,7 @@ mod tests {
       id,
       artists: split_artists(artist),
       title: title.to_string(),
+      genres: Vec::new(),
       path: PathBuf::from(path),
       slug: String::new(),
     };
@@ -1981,6 +2109,7 @@ mod tests {
       id,
       artists: split_artists(artist),
       title: format!("Song {}", id),
+      genres: Vec::new(),
       path: PathBuf::from(format!("/{}.mp3", id)),
       slug: format!("Song {}", id),
     };
@@ -2011,5 +2140,46 @@ mod tests {
       .tracks_by_artist("Chick Corea / Bobby McFerrin")
       .iter()
       .any(|t| t.id == 3));
+  }
+
+  #[test]
+  fn catalog_lists_genres_and_filters_tracks_by_genre() {
+    let track = |id, genres: &[&str]| Track {
+      id,
+      artists: vec!["Artist".to_string()],
+      title: format!("Song {}", id),
+      genres: genres.iter().map(|g| g.to_string()).collect(),
+      path: PathBuf::from(format!("/{}.mp3", id)),
+      slug: format!("Song {}", id),
+    };
+    let catalog = Catalog {
+      tracks: vec![
+        track(0, &["Jazz", "Funk"]),
+        track(1, &["Jazz"]),
+        track(2, &[]), // untagged: appears in no genre
+        track(3, &["Funk"]),
+      ],
+    };
+
+    // Each genre appears once despite being shared across tracks; untagged
+    // tracks contribute nothing.
+    let names: Vec<String> =
+      catalog.list_genres().into_iter().map(|g| g.name).collect();
+    assert_eq!(names, vec!["Funk", "Jazz"]);
+
+    // A multi-genre track surfaces under each of its genres.
+    let funk: Vec<usize> = catalog
+      .tracks_by_genre("Funk")
+      .iter()
+      .map(|t| t.id)
+      .collect();
+    assert_eq!(funk, vec![0, 3]);
+    let jazz: Vec<usize> = catalog
+      .tracks_by_genre("Jazz")
+      .iter()
+      .map(|t| t.id)
+      .collect();
+    assert_eq!(jazz, vec![0, 1]);
+    assert!(catalog.tracks_by_genre("Polka").is_empty());
   }
 }

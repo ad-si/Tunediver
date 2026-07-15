@@ -47,6 +47,9 @@ pub struct CachedTrack {
   // `artists` column. Files with a single artist yield a one-element list.
   pub artists: Vec<String>,
   pub title: String,
+  // Every genre the track is tagged with, stored as a JSON array in the
+  // `genres` column. Empty for tracks without a genre tag.
+  pub genres: Vec<String>,
   pub lyrics: Option<String>,
   pub date_added: Option<String>,
   pub has_cover: bool,
@@ -63,7 +66,8 @@ const SCHEMA_VERSION: i64 = 1;
 // whenever `read_track_tags` starts extracting something it previously missed
 // so existing caches heal on the next scan. v1 introduced multi-artist parsing
 // (multiple ARTIST fields were previously truncated to the first artist).
-pub const CURRENT_TAGS_VERSION: i64 = 1;
+// v2 introduced genre extraction (the GENRE tag was previously ignored).
+pub const CURRENT_TAGS_VERSION: i64 = 2;
 
 // Open (creating if needed) a pooled connection to the database. WAL
 // mode lets readers (cover/detail endpoints) proceed while the background
@@ -98,6 +102,7 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        size       INTEGER NOT NULL,
        artists    TEXT NOT NULL,
        title      TEXT NOT NULL,
+       genres     TEXT,
        lyrics     TEXT,
        date_added TEXT,
        has_cover  INTEGER NOT NULL DEFAULT 0,
@@ -159,13 +164,15 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        WHERE substr(playlist_id, 1, 3) = 'pl_';
      PRAGMA foreign_keys=ON;",
   )?;
-  // Migrate databases created before the technical audio-property columns
-  // existed. Existing rows get NULLs, which the detail endpoint backfills on
-  // first view (see `get_track_properties`).
+  // Migrate databases created before the genres and technical audio-property
+  // columns existed. Existing rows get NULLs; audio properties are backfilled
+  // lazily by the detail endpoint (see `get_track_properties`), genres by the
+  // tags_v-driven re-read on the next scan.
   // `tags_v` records which tag-reading version produced each row (see
   // CURRENT_TAGS_VERSION); existing rows default to NULL, which reads as older
   // than any version and so triggers a one-time re-read on the next scan.
   for (column, ty) in [
+    ("genres", "TEXT"),
     ("duration_secs", "INTEGER"),
     ("bitrate_kbps", "INTEGER"),
     ("sample_rate_hz", "INTEGER"),
@@ -242,14 +249,17 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
   // round-trips without a delimiter that could collide with an artist name.
   let artists_json =
     serde_json::to_string(&t.artists).unwrap_or_else(|_| "[]".to_string());
+  let genres_json =
+    serde_json::to_string(&t.genres).unwrap_or_else(|_| "[]".to_string());
   conn.execute(
     "INSERT INTO tracks
-       (path, mtime, size, artists, title, lyrics, date_added, has_cover, cover_blob, cover_mime,
+       (path, mtime, size, artists, title, genres, lyrics, date_added, has_cover, cover_blob, cover_mime,
         duration_secs, bitrate_kbps, sample_rate_hz, bit_depth, channels, format, tags_v)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
      ON CONFLICT(path) DO UPDATE SET
        mtime=excluded.mtime, size=excluded.size, artists=excluded.artists,
-       title=excluded.title, lyrics=excluded.lyrics, date_added=excluded.date_added,
+       title=excluded.title, genres=excluded.genres, lyrics=excluded.lyrics,
+       date_added=excluded.date_added,
        has_cover=excluded.has_cover, cover_blob=excluded.cover_blob,
        cover_mime=excluded.cover_mime, duration_secs=excluded.duration_secs,
        bitrate_kbps=excluded.bitrate_kbps, sample_rate_hz=excluded.sample_rate_hz,
@@ -261,6 +271,7 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
       t.size,
       artists_json,
       t.title,
+      genres_json,
       t.lyrics,
       t.date_added,
       t.has_cover as i64,
@@ -306,18 +317,19 @@ pub fn set_meta(conn: &Conn, key: &str, value: &str) -> rusqlite::Result<()> {
 // index) stay deterministic across restarts, matching the previous
 // `build_catalog` behavior.
 pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
-  let mut stmt =
-    conn.prepare("SELECT artists, title, path FROM tracks ORDER BY path")?;
+  let mut stmt = conn
+    .prepare("SELECT artists, title, genres, path FROM tracks ORDER BY path")?;
   let rows = stmt.query_map([], |r| {
     Ok((
       r.get::<_, String>(0)?,
       r.get::<_, String>(1)?,
-      r.get::<_, String>(2)?,
+      r.get::<_, Option<String>>(2)?,
+      r.get::<_, String>(3)?,
     ))
   })?;
   let mut tracks = Vec::new();
   for (id, row) in rows.enumerate() {
-    let (artists_raw, title, path) = row?;
+    let (artists_raw, title, genres_raw, path) = row?;
     // Fresh rows hold a JSON array; rows migrated from the old single-string
     // `artist` column are parsed with the same separator logic used at read
     // time. Either way, never leave the list empty.
@@ -326,10 +338,16 @@ pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
     if artists.is_empty() {
       artists.push(crate::UNKNOWN_ARTIST.to_string());
     }
+    // NULL (a row that predates the column, healed on the next scan via the
+    // tags_v bump) reads as "no genres" rather than failing the load.
+    let genres = genres_raw
+      .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+      .unwrap_or_default();
     tracks.push(crate::Track {
       id,
       artists,
       title,
+      genres,
       path: PathBuf::from(path),
       // Filled in by `assign_track_slugs` below, once all tracks are loaded
       // and (artist, title) collisions can be detected.
@@ -538,6 +556,7 @@ mod tests {
       size: 200,
       artists: vec!["Artist".to_string()],
       title: "Title".to_string(),
+      genres: Vec::new(),
       lyrics: None,
       date_added: None,
       has_cover: false,
@@ -576,13 +595,15 @@ mod tests {
     let pool = temp_pool("artists_json");
     let conn = pool.get().unwrap();
 
-    // A multi-artist track round-trips through the JSON `artists` column.
+    // A multi-artist, multi-genre track round-trips through the JSON columns.
     let mut t = sample_track("/m/collab.mp3");
     t.artists = vec!["Kenny Garrett".to_string(), "Brad Mehldau".to_string()];
+    t.genres = vec!["Jazz".to_string(), "Post-Bop".to_string()];
     upsert_track(&conn, &t).unwrap();
 
     // A row left behind by the pre-JSON schema: a single delimited string in
-    // the (now renamed) column. load_catalog must split it via the fallback.
+    // the (now renamed) column and no genres column value. load_catalog must
+    // split the artists via the fallback and read the genres as empty.
     conn
       .execute(
         "INSERT INTO tracks (path, mtime, size, artists, title)
@@ -604,9 +625,14 @@ mod tests {
       vec!["Kenny Garrett".to_string(), "Brad Mehldau".to_string()]
     );
     assert_eq!(
+      by_path("/m/collab.mp3").genres,
+      vec!["Jazz".to_string(), "Post-Bop".to_string()]
+    );
+    assert_eq!(
       by_path("/m/legacy.mp3").artists,
       vec!["Bobby McFerrin".to_string(), "Chick Corea".to_string()]
     );
+    assert!(by_path("/m/legacy.mp3").genres.is_empty());
   }
 
   #[test]
