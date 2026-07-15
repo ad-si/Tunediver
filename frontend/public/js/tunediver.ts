@@ -2890,6 +2890,10 @@ function route(state: string | { url?: string }): void {
   }
 
   function fromURL(url: string): void {
+    // Treat a trailing slash as insignificant so /artists/Alice/ routes the
+    // same as /artists/Alice (the segment split would otherwise yield a
+    // trailing "" and miss the exact-length checks below).
+    url = url.replace(/\/+$/, "")
     const dirs = url.split("/")
     const view = viewController()
 
