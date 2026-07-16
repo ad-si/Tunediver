@@ -231,7 +231,9 @@ function initPlayer () {
       playerInfoEl.addEventListener("click", () => {
         const playing = store.currentlyPlaying
         if (!playing) return
-        const url = playing.artistSlug + "/" + playing.songSlug
+        // Must match route()'s song URL shape (artists/<artist>/songs/<song>);
+        // a bare "<artist>/<song>" hits the catch-all and alerts an error.
+        const url = songPath(playing.artistSlug, playing.songSlug)
         history.pushState({"url": url}, playing.songSlug, baseURL + "/" + url)
         route(url)
       })
