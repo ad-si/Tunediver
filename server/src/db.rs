@@ -106,8 +106,6 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        lyrics     TEXT,
        date_added TEXT,
        has_cover  INTEGER NOT NULL DEFAULT 0,
-       cover_blob BLOB,
-       cover_mime TEXT,
        duration_secs   INTEGER,
        bitrate_kbps    INTEGER,
        sample_rate_hz  INTEGER,
@@ -131,7 +129,12 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        added_at    TEXT,
        PRIMARY KEY (playlist_id, position)
      );
-     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);",
+     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+     CREATE TABLE IF NOT EXISTS track_covers (
+       path       TEXT PRIMARY KEY REFERENCES tracks(path) ON DELETE CASCADE,
+       cover_blob BLOB NOT NULL,
+       cover_mime TEXT
+     );",
   )?;
   // Migrate databases created before `tracks.artist` became the JSON-array
   // `tracks.artists`. The rename preserves the old single-string values in
@@ -185,6 +188,27 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
       conn
         .execute(&format!("ALTER TABLE tracks ADD COLUMN {column} {ty}"), [])?;
     }
+  }
+  // Migrate databases whose cover art still lives inline in `tracks`. Storing
+  // ~tens-of-KB cover BLOBs in the hot table forced every full-table scan —
+  // notably the per-scan stamp load (`load_track_stamps`) — to page through
+  // gigabytes of image data just to reach a few small columns, which is why an
+  // initial scan could crawl for hours. Move the art into the `track_covers`
+  // side table (created above), then drop the dead columns and reclaim the
+  // freed space. `INSERT OR IGNORE` makes the copy idempotent so a crash
+  // between the copy and the column drops converges on re-run. `ALTER TABLE
+  // DROP COLUMN` rewrites each row without the BLOB; VACUUM then shrinks the
+  // file from the freed pages.
+  if column_exists(conn, "tracks", "cover_blob")? {
+    conn.execute_batch(
+      "INSERT OR IGNORE INTO track_covers (path, cover_blob, cover_mime)
+         SELECT path, cover_blob, cover_mime FROM tracks
+         WHERE cover_blob IS NOT NULL;
+       ALTER TABLE tracks DROP COLUMN cover_blob;
+       ALTER TABLE tracks DROP COLUMN cover_mime;",
+    )?;
+    // VACUUM must run outside any transaction, hence its own batch.
+    conn.execute_batch("VACUUM")?;
   }
   conn.execute(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
@@ -251,17 +275,21 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
     serde_json::to_string(&t.artists).unwrap_or_else(|_| "[]".to_string());
   let genres_json =
     serde_json::to_string(&t.genres).unwrap_or_else(|_| "[]".to_string());
-  conn.execute(
+  // The tag/property columns and the cover BLOB live in separate tables, so an
+  // upsert touches both. A transaction keeps them consistent: a track is never
+  // left with a stale cover, and the `track_covers` insert always finds its
+  // parent `tracks` row (the FK it references).
+  let tx = conn.unchecked_transaction()?;
+  tx.execute(
     "INSERT INTO tracks
-       (path, mtime, size, artists, title, genres, lyrics, date_added, has_cover, cover_blob, cover_mime,
+       (path, mtime, size, artists, title, genres, lyrics, date_added, has_cover,
         duration_secs, bitrate_kbps, sample_rate_hz, bit_depth, channels, format, tags_v)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
      ON CONFLICT(path) DO UPDATE SET
        mtime=excluded.mtime, size=excluded.size, artists=excluded.artists,
        title=excluded.title, genres=excluded.genres, lyrics=excluded.lyrics,
        date_added=excluded.date_added,
-       has_cover=excluded.has_cover, cover_blob=excluded.cover_blob,
-       cover_mime=excluded.cover_mime, duration_secs=excluded.duration_secs,
+       has_cover=excluded.has_cover, duration_secs=excluded.duration_secs,
        bitrate_kbps=excluded.bitrate_kbps, sample_rate_hz=excluded.sample_rate_hz,
        bit_depth=excluded.bit_depth, channels=excluded.channels, format=excluded.format,
        tags_v=excluded.tags_v",
@@ -275,8 +303,6 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
       t.lyrics,
       t.date_added,
       t.has_cover as i64,
-      t.cover_blob,
-      t.cover_mime,
       t.props.duration_secs,
       t.props.bitrate_kbps,
       t.props.sample_rate_hz,
@@ -286,6 +312,21 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
       CURRENT_TAGS_VERSION,
     ],
   )?;
+  // Only tracks with embedded art get a `track_covers` row; a re-scan that no
+  // longer finds a cover (or a known-no-cover track) removes any stale one so
+  // the negative cache — `has_cover = 0`, no cover row — stays accurate.
+  match &t.cover_blob {
+    Some(blob) => tx.execute(
+      "INSERT INTO track_covers (path, cover_blob, cover_mime) VALUES (?1, ?2, ?3)
+       ON CONFLICT(path) DO UPDATE SET
+         cover_blob=excluded.cover_blob, cover_mime=excluded.cover_mime",
+      params![t.path, blob, t.cover_mime],
+    )?,
+    None => {
+      tx.execute("DELETE FROM track_covers WHERE path = ?1", params![t.path])?
+    }
+  };
+  tx.commit()?;
   Ok(())
 }
 
@@ -434,9 +475,14 @@ pub fn get_cover(
   conn: &Conn,
   path: &str,
 ) -> rusqlite::Result<Option<CachedCover>> {
+  // The cover BLOB lives in `track_covers`; a LEFT JOIN yields NULL blob/mime
+  // for known-no-cover tracks (`has_cover = 0`, no cover row). A missing
+  // `tracks` row still means "not scanned yet" and returns None.
   conn
     .query_row(
-      "SELECT has_cover, cover_blob, cover_mime FROM tracks WHERE path = ?1",
+      "SELECT t.has_cover, c.cover_blob, c.cover_mime
+       FROM tracks t LEFT JOIN track_covers c ON c.path = t.path
+       WHERE t.path = ?1",
       params![path],
       |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
     )
@@ -750,6 +796,89 @@ mod tests {
     assert!(blob.is_none());
     // Not-yet-scanned track → None (distinct from a known-no-cover track).
     assert_eq!(get_cover(&conn, "/m/missing.mp3").unwrap(), None);
+  }
+
+  #[test]
+  fn rescan_without_cover_clears_stale_cover_row() {
+    let pool = temp_pool("cover_removal");
+    let conn = pool.get().unwrap();
+
+    // A track that first had embedded art...
+    let mut t = sample_track("/m/a.mp3");
+    t.has_cover = true;
+    t.cover_blob = Some(vec![9, 9, 9]);
+    t.cover_mime = Some("image/jpeg".to_string());
+    upsert_track(&conn, &t).unwrap();
+    assert_eq!(
+      get_cover(&conn, "/m/a.mp3").unwrap(),
+      Some((true, Some(vec![9, 9, 9]), Some("image/jpeg".to_string())))
+    );
+
+    // ...loses it on a later re-scan (art stripped from the file). The stale
+    // cover row must be removed so the negative cache is accurate.
+    let plain = sample_track("/m/a.mp3");
+    upsert_track(&conn, &plain).unwrap();
+    let (has, blob, _) = get_cover(&conn, "/m/a.mp3").unwrap().unwrap();
+    assert!(!has);
+    assert!(blob.is_none());
+    let cover_rows: i64 = conn
+      .query_row("SELECT COUNT(*) FROM track_covers", [], |r| r.get(0))
+      .unwrap();
+    assert_eq!(cover_rows, 0, "cover row must not linger after removal");
+  }
+
+  #[test]
+  fn init_schema_migrates_inline_covers_to_side_table() {
+    // Build a pool WITHOUT init_schema so we can stand up a legacy `tracks`
+    // table whose cover art still lives inline, exactly as older databases had.
+    let mut path = std::env::temp_dir();
+    path.push("tunediver-test-cover_migration.db");
+    for suffix in ["", "-wal", "-shm"] {
+      let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+    }
+    let manager = SqliteConnectionManager::file(&path)
+      .with_init(|c| c.execute_batch("PRAGMA foreign_keys=ON;"));
+    let pool = r2d2::Pool::builder().max_size(1).build(manager).unwrap();
+    let conn = pool.get().unwrap();
+    conn
+      .execute_batch(
+        "CREATE TABLE tracks (
+           path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL,
+           artists TEXT NOT NULL, title TEXT NOT NULL,
+           has_cover INTEGER NOT NULL DEFAULT 0, cover_blob BLOB, cover_mime TEXT
+         );
+         INSERT INTO tracks (path, mtime, size, artists, title, has_cover, cover_blob, cover_mime)
+           VALUES ('/m/art.mp3', 1, 2, '[\"A\"]', 'T', 1, x'0102', 'image/png');
+         INSERT INTO tracks (path, mtime, size, artists, title, has_cover)
+           VALUES ('/m/plain.mp3', 3, 4, '[\"B\"]', 'U', 0);",
+      )
+      .unwrap();
+
+    // Running init_schema performs the one-time split.
+    init_schema(&conn).unwrap();
+
+    // The dead columns are gone from the hot table...
+    assert!(!column_exists(&conn, "tracks", "cover_blob").unwrap());
+    assert!(!column_exists(&conn, "tracks", "cover_mime").unwrap());
+    // ...and only the track that had art carries a cover row.
+    let cover_rows: i64 = conn
+      .query_row("SELECT COUNT(*) FROM track_covers", [], |r| r.get(0))
+      .unwrap();
+    assert_eq!(cover_rows, 1);
+    assert_eq!(
+      get_cover(&conn, "/m/art.mp3").unwrap(),
+      Some((true, Some(vec![1, 2]), Some("image/png".to_string())))
+    );
+    let (has, blob, _) = get_cover(&conn, "/m/plain.mp3").unwrap().unwrap();
+    assert!(!has);
+    assert!(blob.is_none());
+
+    // Idempotent: a second run (columns already dropped) is a no-op.
+    init_schema(&conn).unwrap();
+    assert_eq!(
+      get_cover(&conn, "/m/art.mp3").unwrap(),
+      Some((true, Some(vec![1, 2]), Some("image/png".to_string())))
+    );
   }
 
   #[test]
