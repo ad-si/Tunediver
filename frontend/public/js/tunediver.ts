@@ -602,23 +602,34 @@ function playSong(
       playpause()
     }
     // Player info is Artist - Title, both taken from the audio file's
-    // embedded tags (track_artist / title). The artist name is a link to the
-    // artist's page; clicking elsewhere on the info (the title) still opens
-    // the song detail via the #playerInfo handler. Build with textContent so
-    // tag values containing HTML-special characters render as text.
+    // embedded tags (track_artist / title). Each credited artist is a separate
+    // link to its own artist page (track_artists carries the split list);
+    // clicking elsewhere on the info (the title) still opens the song detail
+    // via the #playerInfo handler. Build with textContent so tag values
+    // containing HTML-special characters render as text.
     const playerInfoEl = $("playerInfo")
     playerInfoEl.innerHTML = ""
-    const artistLink = document.createElement("a")
-    artistLink.className = "playerArtist"
-    artistLink.textContent = song.track_artist || ""
-    artistLink.addEventListener("click", (e: Event) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const url = artistPath(artistName)
-      history.pushState({ "url": url }, artistName, baseURL + "/" + url)
-      route(url)
+    const hasArtistList = !!(song.track_artists && song.track_artists.length)
+    const artistNames = hasArtistList
+      ? (song.track_artists as string[])
+      : [song.track_artist || ""]
+    artistNames.forEach((name, i) => {
+      if (i > 0) {
+        playerInfoEl.appendChild(document.createTextNode(", "))
+      }
+      const slug = hasArtistList ? encodeURIComponent(name) : artistName
+      const artistLink = document.createElement("a")
+      artistLink.className = "playerArtist"
+      artistLink.textContent = name
+      artistLink.addEventListener("click", (e: Event) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const url = artistPath(slug)
+        history.pushState({ "url": url }, name, baseURL + "/" + url)
+        route(url)
+      })
+      playerInfoEl.appendChild(artistLink)
     })
-    playerInfoEl.appendChild(artistLink)
     playerInfoEl.appendChild(document.createTextNode(" - " + song.title))
 
     // Populating MediaSession metadata is what makes macOS route the
