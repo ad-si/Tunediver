@@ -119,7 +119,8 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        name       TEXT NOT NULL,
        created_at INTEGER NOT NULL,
        updated_at INTEGER NOT NULL,
-       position   INTEGER NOT NULL
+       position   INTEGER NOT NULL,
+       sort_order TEXT
      );
      CREATE TABLE IF NOT EXISTS playlist_tracks (
        playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
@@ -150,6 +151,12 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   // column explicitly; ignore the error raised when it is already present.
   if !column_exists(conn, "playlist_tracks", "added_at")? {
     conn.execute("ALTER TABLE playlist_tracks ADD COLUMN added_at TEXT", [])?;
+  }
+  // Migrate databases created before `playlists.sort_order` existed. Holds the
+  // last-selected display sort for each playlist ("index" / "added-asc" /
+  // "added-desc"); NULL means the client falls back to its default.
+  if !column_exists(conn, "playlists", "sort_order")? {
+    conn.execute("ALTER TABLE playlists ADD COLUMN sort_order TEXT", [])?;
   }
   // Migrate databases whose playlist ids still carry the legacy `pl_` prefix
   // (dropped in favour of bare hex ids). Ids are opaque, so stripping the
@@ -493,22 +500,23 @@ pub fn get_cover(
 
 pub fn load_playlists(conn: &Conn) -> rusqlite::Result<Vec<crate::Playlist>> {
   let mut stmt = conn.prepare(
-    "SELECT id, name, created_at, updated_at FROM playlists ORDER BY position",
+    "SELECT id, name, created_at, updated_at, sort_order FROM playlists ORDER BY position",
   )?;
-  let metas: Vec<(String, String, i64, i64)> = stmt
+  let metas: Vec<(String, String, i64, i64, Option<String>)> = stmt
     .query_map([], |r| {
       Ok((
         r.get::<_, String>(0)?,
         r.get::<_, String>(1)?,
         r.get::<_, i64>(2)?,
         r.get::<_, i64>(3)?,
+        r.get::<_, Option<String>>(4)?,
       ))
     })?
     .collect::<rusqlite::Result<Vec<_>>>()?;
   drop(stmt);
 
   let mut playlists = Vec::with_capacity(metas.len());
-  for (id, name, created_at, updated_at) in metas {
+  for (id, name, created_at, updated_at, sort_order) in metas {
     let tracks = load_playlist_tracks(conn, &id)?;
     playlists.push(crate::Playlist {
       id,
@@ -516,6 +524,7 @@ pub fn load_playlists(conn: &Conn) -> rusqlite::Result<Vec<crate::Playlist>> {
       tracks,
       created_at: created_at as u64,
       updated_at: updated_at as u64,
+      sort_order,
     });
   }
   Ok(playlists)
@@ -550,14 +559,15 @@ pub fn save_playlists(
   tx.execute("DELETE FROM playlists", [])?;
   for (pos, p) in playlists.iter().enumerate() {
     tx.execute(
-      "INSERT INTO playlists (id, name, created_at, updated_at, position)
-       VALUES (?1, ?2, ?3, ?4, ?5)",
+      "INSERT INTO playlists (id, name, created_at, updated_at, position, sort_order)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
       params![
         p.id,
         p.name,
         p.created_at as i64,
         p.updated_at as i64,
-        pos as i64
+        pos as i64,
+        p.sort_order
       ],
     )?;
     for (tpos, t) in p.tracks.iter().enumerate() {
@@ -938,6 +948,7 @@ mod tests {
         }],
         created_at: 5,
         updated_at: 6,
+        sort_order: Some("added-asc".to_string()),
       },
       crate::Playlist {
         id: "a".to_string(),
@@ -956,6 +967,7 @@ mod tests {
         ],
         created_at: 1,
         updated_at: 2,
+        sort_order: None,
       },
     ];
     save_playlists(&conn, &playlists).unwrap();
@@ -983,6 +995,11 @@ mod tests {
       Some("2016-08-19T20:09:09Z")
     );
     assert_eq!(second.tracks[0].added_at, None);
+
+    // The per-playlist sort preference survives the round-trip, including the
+    // `None` case (sort never changed).
+    assert_eq!(first.sort_order.as_deref(), Some("added-asc"));
+    assert_eq!(second.sort_order, None);
   }
 
   #[test]
@@ -1001,6 +1018,7 @@ mod tests {
         }],
         created_at: 1,
         updated_at: 1,
+        sort_order: None,
       }],
     )
     .unwrap();
@@ -1013,6 +1031,7 @@ mod tests {
         tracks: vec![],
         created_at: 2,
         updated_at: 2,
+        sort_order: None,
       }],
     )
     .unwrap();

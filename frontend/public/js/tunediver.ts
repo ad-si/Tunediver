@@ -2315,6 +2315,15 @@ const printObj = {
   playlist(id: string): void {
     ajax<Playlist>(`/playlists/${id}`, (playlist) => {
       store.currentPlaylistId = playlist.id
+      // Restore the sort last selected for this playlist; fall back to the
+      // default for playlists whose sort was never changed (or an unknown
+      // stored value). Sorts are per-playlist, so this overrides whatever was
+      // chosen in a previously open one.
+      const stored = playlist.sort_order
+      store.playlistSort =
+        stored === "index" || stored === "added-asc" || stored === "added-desc"
+          ? stored
+          : "added-desc"
       $("c3").style.display = ""
       // Widen c3 so the tracks' "Artist — Title" rows aren't clipped by the
       // 300px cap. Skip it when opened from a search result: c2 is still
@@ -2488,6 +2497,15 @@ const printObj = {
           store.playlistSort = mode
           markActiveSort()
           renderTracks()
+          // Persist the choice so it's restored next time this playlist opens.
+          // Fire-and-forget: the local view already reflects the new order.
+          playlist.sort_order = mode
+          ajaxMutate<Playlist>(
+            "PATCH",
+            `/playlists/${playlist.id}/sort`,
+            { sort: mode },
+            () => {}
+          )
         })
       })
       markActiveSort()

@@ -707,6 +707,11 @@ struct Playlist {
   tracks: Vec<TrackRef>,
   created_at: u64,
   updated_at: u64,
+  // The display sort last selected for this playlist ("index" / "added-asc" /
+  // "added-desc"). `None` for playlists whose sort was never changed; the
+  // client falls back to its own default in that case.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  sort_order: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1364,6 +1369,9 @@ struct PlaylistDetail {
   created_at: u64,
   updated_at: u64,
   tracks: Vec<PlaylistTrack>,
+  // Last-selected display sort, echoed so the client can restore it on open.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  sort_order: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1382,6 +1390,12 @@ struct CreatePlaylistInput {
 #[serde(crate = "rocket::serde")]
 struct RenamePlaylistInput {
   name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct SetPlaylistSortInput {
+  sort: String,
 }
 
 #[derive(Deserialize)]
@@ -1458,6 +1472,7 @@ fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
     created_at: playlist.created_at,
     updated_at: playlist.updated_at,
     tracks,
+    sort_order: playlist.sort_order.clone(),
   }
 }
 
@@ -1506,6 +1521,7 @@ fn create_playlist(
     tracks: Vec::new(),
     created_at: now,
     updated_at: now,
+    sort_order: None,
   };
   let location = format!("/api/playlists/{}", playlist.id);
   let detail = PlaylistDetail {
@@ -1514,6 +1530,7 @@ fn create_playlist(
     created_at: playlist.created_at,
     updated_at: playlist.updated_at,
     tracks: Vec::new(),
+    sort_order: playlist.sort_order.clone(),
   };
 
   let mut playlists = store.playlists.write().expect("playlists lock poisoned");
@@ -1559,6 +1576,32 @@ fn rename_playlist(
     .ok_or(Status::NotFound)?;
   playlist.name = name.to_string();
   playlist.updated_at = now_secs();
+  let detail = hydrate(playlist, &config.catalog.read().unwrap());
+  store.save(&playlists);
+  Ok(Json(PlaylistDetailResponse { data: detail }))
+}
+
+// Persist the display sort last selected for a playlist so it can be restored
+// on reopen. This is a view preference, not a content change, so it does not
+// bump `updated_at`.
+#[patch("/playlists/<id>/sort", data = "<input>")]
+fn set_playlist_sort(
+  id: &str,
+  input: Json<SetPlaylistSortInput>,
+  store: &State<PlaylistStore>,
+  config: &State<AppConfig>,
+) -> Result<Json<PlaylistDetailResponse>, Status> {
+  let sort = input.sort.trim();
+  if !matches!(sort, "index" | "added-asc" | "added-desc") {
+    return Err(Status::BadRequest);
+  }
+
+  let mut playlists = store.playlists.write().expect("playlists lock poisoned");
+  let playlist = playlists
+    .iter_mut()
+    .find(|p| p.id == id)
+    .ok_or(Status::NotFound)?;
+  playlist.sort_order = Some(sort.to_string());
   let detail = hydrate(playlist, &config.catalog.read().unwrap());
   store.save(&playlists);
   Ok(Json(PlaylistDetailResponse { data: detail }))
@@ -1909,6 +1952,7 @@ fn rocket() -> _ {
         create_playlist,
         get_playlist,
         rename_playlist,
+        set_playlist_sort,
         delete_playlist,
         add_playlist_track,
         remove_playlist_track,

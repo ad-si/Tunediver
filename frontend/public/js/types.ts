@@ -86,4 +86,7 @@ type Playlist = {
   created_at: number
   updated_at: number
   tracks: PlaylistTrack[]
+  // Last-selected display sort ("index" | "added-asc" | "added-desc"), restored
+  // on open. Absent for playlists whose sort was never changed.
+  sort_order?: string
 }
