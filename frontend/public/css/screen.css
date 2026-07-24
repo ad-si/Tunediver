@@ -752,6 +752,29 @@ input[type="search"] {
   pointer-events: none;
 }
 
+/* Manual Order track numbers. Sit inside the same 20px-wide gutter as the
+   hover play button, hidden whenever a gutter indicator (play on hover, the
+   speaker on the playing row) takes over so nothing overlaps. */
+.row .trackNum {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 100%;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.row:hover .trackNum,
+.row.highlight .trackNum,
+.row.playing .trackNum {
+  display: none;
+}
+
 /* Sort controls in the playlist detail panel (c4). */
 #playlistSort {
   margin-top: 12px;

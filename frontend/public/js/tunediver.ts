@@ -2356,7 +2356,11 @@ const printObj = {
           "hasAddedDates",
           playlist.tracks.some((t) => Boolean(t.added_at))
         )
-        sortedEntries().forEach(({ track, index }) => {
+        // Manual Order shows the tracks in their stored order, so number them
+        // in front (1-based) to make the position explicit.
+        const manualOrder = store.playlistSort === "index"
+        $("c3").classList.toggle("manualOrder", manualOrder)
+        sortedEntries().forEach(({ track, index }, position) => {
           const link = shaven(
             ["a", songLabel(track.track_artist, track.title)]
           ).rootElement
@@ -2375,6 +2379,9 @@ const printObj = {
               "data-song-slug": track.slug,
             },
               [play],
+              ...(manualOrder
+                ? [["span#.trackNum", String(position + 1)]]
+                : []),
               [link],
               [added],
               [remove],
@@ -2452,7 +2459,7 @@ const printObj = {
               ],
               ["div#playlistSort",
                 ["span#sortLabel", "Sort:"],
-                ["button#.sortBtn", { "data-sort": "index" }, "Order"],
+                ["button#.sortBtn", { "data-sort": "index" }, "Manual Order"],
                 ["button#.sortBtn", { "data-sort": "added-asc" }, "Added ↑"],
                 ["button#.sortBtn", { "data-sort": "added-desc" }, "Added ↓"],
               ],
