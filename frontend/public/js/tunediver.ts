@@ -2894,6 +2894,20 @@ function viewController(): Record<string, Function> {
       printObj.artists()
       printObj.songs(artistSlug)
       printObj.song(songSlug, artistSlug)
+      // Pre-load the track (without starting playback, which browsers block on
+      // a fresh page load anyway) so the URL lands ready to play. Only when the
+      // player is still empty — on back/forward navigation this must not yank
+      // out a song that is already loaded or playing. Fetched separately from
+      // printObj.song rather than reusing its response, so that clicking a
+      // song in a list, which goes through printObj.song directly, keeps
+      // opening the detail without touching the transport.
+      if (!audio.src) {
+        ajax<Song>(`/artists/${artistSlug}/songs/${songSlug}`, (songData) => {
+          // Re-checked: the user may have started something while this was
+          // in flight.
+          if (!audio.src) playSong(songData, artistSlug, false, false)
+        })
+      }
     },
 
     playlists(): void {
