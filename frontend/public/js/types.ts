@@ -24,6 +24,27 @@ type Song = {
   file_size?: number
 }
 
+// One field of one tag, as the file stores it: `key` is the file's own
+// spelling ("TIT2", "ALBUMARTIST", "©nam"), `name` the readable equivalent
+// when the server could resolve one.
+type MetadataItem = {
+  key: string
+  name?: string | null
+  value: string
+}
+
+// One tag out of the (possibly several) a file carries.
+type MetadataTag = {
+  kind: string
+  items: MetadataItem[]
+}
+
+type SongMetadata = {
+  file_name: string
+  file_path: string
+  tags: MetadataTag[]
+}
+
 type Artist = {
   name: string
   slug: string

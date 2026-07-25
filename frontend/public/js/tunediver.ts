@@ -1794,6 +1794,124 @@ function trackArtistNode(song: Song, fallbackSlug: string): any[] {
   return node
 }
 
+// --- Song detail actions ---------------------------------------------------
+
+// The song currently shown in the detail column, looked up through the
+// registry entry stamped on the rendered node. Null when no song is open.
+function detailSongEntry(): SongRegistryEntry | null {
+  const songDiv = document.getElementById("song")
+  if (!songDiv) return null
+  const songId = songDiv.getAttribute("data-song-id")
+  if (!songId) return null
+  return songRegistry[songId] || null
+}
+
+// Acknowledge a copy on the button that triggered it, then restore its label.
+// `.copied` swaps the icon to a checkmark (see screen.css).
+function flashCopied(button: HTMLElement, label: string): void {
+  // Write into the label span rather than the button, which would drop the
+  // span along with the icon-only handling that hangs off it.
+  const target = button.querySelector(".songActionLabel") || button
+  target.textContent = "Copied!"
+  button.classList.add("copied")
+  setTimeout(() => {
+    target.textContent = label
+    button.classList.remove("copied")
+  }, 2000)
+}
+
+// Open the metadata dialog for a song and fill it with every tag the server
+// finds in the file. The request is made each time the dialog opens: it reads
+// the file from disk rather than the catalog cache, so it is the one view that
+// reflects a retag without a rescan.
+function showMetadataModal(song: Song, artistSlug: string): void {
+  const body = $("metadataBody")
+  const heading = $("metadataHeading")
+  heading.textContent = song.title ? "Metadata — " + song.title : "Metadata"
+  body.innerHTML = ""
+  $("metadataModal").style.display = "flex"
+
+  ajax<SongMetadata>(
+    `/artists/${artistSlug}/songs/${song.slug}/metadata`,
+    (data) => renderMetadata(data),
+    body
+  )
+}
+
+function renderMetadata(data: SongMetadata): void {
+  const body = $("metadataBody")
+  body.innerHTML = ""
+
+  shaven([body, ["p#metadataPath", data.file_path || data.file_name || ""]])
+
+  if (!data.tags || data.tags.length === 0) {
+    shaven([body,
+      ["p.settingsHint", "This file carries no tags at all."]
+    ])
+    return
+  }
+
+  data.tags.forEach((tag) => {
+    const count = tag.items.length
+    const section: any[] = ["section.metadataTag",
+      ["h3", tag.kind + " · " + (count === 1 ? "1 field" : count + " fields")],
+    ]
+    const list: any[] = ["dl.metadataList"]
+    tag.items.forEach((item) => {
+      // Label rows by what the field means, and keep the key the file
+      // actually stores ("TIT2", "©nam") on the tooltip — it matters when
+      // you're editing tags, but not while reading them. Fields the server
+      // couldn't name fall back to showing the raw key.
+      const term: any[] = ["dt", { "title": item.key }]
+      term.push(item.name
+        ? ["span.metadataName", item.name]
+        : ["span.metadataKey", item.key])
+      list.push(term, metadataValueNode(item.value))
+    })
+    section.push(list)
+    shaven([body, section])
+  })
+}
+
+// Build a tag value's `<dd>`, turning any http(s) URLs it contains into links.
+// Plenty of fields carry them — WOAR/WXXX frames outright, but also the
+// service links taggers leave in COMMENT/DESCRIPTION — and a value in a
+// scrollable box is awkward to select and copy by hand.
+//
+// A value with no URL stays a plain text node: shaven treats a bare string
+// child as "set text content", so the split form has to wrap every run,
+// including the text between links, in an element of its own.
+function metadataValueNode(value: string): any[] {
+  const urlRe = /https?:\/\/\S+/g
+  const node: any[] = ["dd"]
+  let index = 0
+  let match: RegExpExecArray | null
+
+  while ((match = urlRe.exec(value)) !== null) {
+    // Punctuation that ends the surrounding sentence isn't part of the URL.
+    const url = match[0].replace(/[.,;:!?)\]}'"]+$/, "")
+    if (match.index > index) {
+      node.push(["span", value.slice(index, match.index)])
+    }
+    node.push(["a.metadataLink", {
+      "href": url,
+      "target": "_blank",
+      "rel": "noopener noreferrer",
+    }, url])
+    index = match.index + url.length
+    // Resume after the trimmed URL, not after the raw match.
+    urlRe.lastIndex = index
+  }
+
+  if (index === 0) {
+    return ["dd", value]
+  }
+  if (index < value.length) {
+    node.push(["span", value.slice(index)])
+  }
+  return node
+}
+
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
@@ -2024,31 +2142,65 @@ const printObj = {
       // Create song detail view with data-id attribute
       const coverUrl = baseURL + "/api/artists/" + artistSlug
         + "/songs/" + songData.slug + "/cover"
-      const songDetailDiv = shaven(
+      shaven(
         [$("c4"),
           ["div#song", {"data-song-id": detailSongId},
-            ["button#playSong", "Play"],
-            ["button#addSong", "Add"],
-            ["button#shareSong", "Share"],
-            ["button#copyFilepath", {title: songData.file_path || ""}, "Copy Filepath"],
-            ["img#songCover", {
-              "src": coverUrl,
-              "alt": "Image of " + (songData.track_artist || ""),
-            }],
-            ["nav#songNav",
-              trackArtistNode(songData, artistSlug),
-              ["h2#heading", songData.title],
-              ["p#dateAdded",
-                songData.date_added
-                  ? "Added " + songData.date_added
-                  : "",
+            // Cover, credits and toolbar are grouped so they can stay put
+            // while long lyrics scroll on their own (see #songHeader in
+            // screen.css).
+            ["div#songHeader",
+              ["img#songCover", {
+                "src": coverUrl,
+                "alt": "Image of " + (songData.track_artist || ""),
+              }],
+              ["nav#songNav",
+                trackArtistNode(songData, artistSlug),
+                ["h2#heading", songData.title],
+                ["p#dateAdded",
+                  songData.date_added
+                    ? "Added " + songData.date_added
+                    : "",
+                ],
+                songMetaNode(songData),
               ],
-              songMetaNode(songData),
+              // One toolbar under the cover and the credits rather than a
+              // stack of buttons floated into the corner: playback first, then
+              // the three things you can take away from the track (its name,
+              // its path, its tags). Each label sits in its own span so the
+              // three long ones can drop to icon-only in a narrow column
+              // instead of the row wrapping (see #songActions in screen.css);
+              // those carry an aria-label for when the text is gone.
+              ["div#songActions",
+                ["button#playSong.songAction.primary",
+                  { "title": "Play this song" },
+                  ["span.songActionLabel", "Play"]],
+                ["button#addSong.songAction",
+                  { "title": "Add this song to a playlist" },
+                  ["span.songActionLabel", "Add"]],
+                ["button#copySong.songAction",
+                  {
+                    "title": "Copy “Artist - Title” to the clipboard",
+                    "aria-label": "Copy name",
+                  },
+                  ["span.songActionLabel", "Copy Name"]],
+                ["button#copyFilepath.songAction",
+                  {
+                    "title": songData.file_path || "",
+                    "aria-label": "Copy path",
+                  },
+                  ["span.songActionLabel", "Copy Path"]],
+                ["button#songMetadata.songAction",
+                  {
+                    "title": "Show every tag stored in the file",
+                    "aria-label": "Metadata",
+                  },
+                  ["span.songActionLabel", "Metadata"]],
+              ],
             ],
             lyricsNode(songData, artistSlug),
           ]
         ]
-      ).rootElement
+      )
 
       // Fall back to placeholder if no embedded cover art
       const coverImg = document.getElementById("songCover") as HTMLImageElement
@@ -2068,6 +2220,11 @@ const printObj = {
       container.onclick = (e: MouseEvent) => {
         let target = e.target as HTMLElement
 
+        // A click on a toolbar button usually lands on its label span, so
+        // resolve to the button before the id checks below.
+        const action = target.closest(".songAction") as HTMLElement | null
+        if (action) target = action
+
         // Each artist name links to that artist's page; route in-app rather
         // than following the anchor's href so it stays a single-page
         // navigation. The clicked link carries its own slug so a multi-artist
@@ -2086,46 +2243,49 @@ const printObj = {
           e.preventDefault()
           e.stopPropagation()
 
-          const songDiv = document.getElementById("song")
-          if (songDiv) {
-            const songId = songDiv.getAttribute("data-song-id")
-            if (songId && songRegistry[songId]) {
-              const { song, artist } = songRegistry[songId]
-              console.log("Detail play button clicked:", song.title)
-              playSong(song, artist, false)
-            }
+          const entry = detailSongEntry()
+          if (entry) {
+            playSong(entry.song, entry.artist, false)
           }
           return false
         }
 
         if (target.id === "addSong") {
           e.stopPropagation()
-          const songDiv = document.getElementById("song")
-          if (songDiv) {
-            const songId = songDiv.getAttribute("data-song-id")
-            if (songId && songRegistry[songId]) {
-              showAddToPlaylistBubble(
-                songRegistry[songId].song,
-                target,
-              )
-            }
+          const entry = detailSongEntry()
+          if (entry) {
+            showAddToPlaylistBubble(entry.song, target)
+          }
+        }
+
+        // The same thing the header's copy button puts on the clipboard, for
+        // the song being looked at rather than the one playing.
+        if (target.id === "copySong") {
+          const entry = detailSongEntry()
+          if (entry) {
+            const credit = entry.song.track_artist || ""
+            const text = credit
+              ? credit + " - " + entry.song.title
+              : entry.song.title
+            copyToClipboard(text)
+            flashCopied(target, "Copy Name")
           }
         }
 
         if (target.id === "copyFilepath") {
-          const songDiv = document.getElementById("song")
-          if (songDiv) {
-            const songId = songDiv.getAttribute("data-song-id")
-            if (songId && songRegistry[songId]) {
-              const filePath = songRegistry[songId].song.file_path
-              if (filePath) {
-                navigator.clipboard.writeText(filePath)
-                target.textContent = "Copied!"
-                setTimeout(() => {
-                  target.textContent = "Copy Filepath"
-                }, 2000)
-              }
-            }
+          const entry = detailSongEntry()
+          const filePath = entry && entry.song.file_path
+          if (filePath) {
+            copyToClipboard(filePath)
+            flashCopied(target, "Copy Path")
+          }
+        }
+
+        if (target.id === "songMetadata") {
+          e.stopPropagation()
+          const entry = detailSongEntry()
+          if (entry) {
+            showMetadataModal(entry.song, entry.artist)
           }
         }
       }
@@ -2711,6 +2871,10 @@ function viewController(): Record<string, Function> {
         $("settingsModal").style.display = "none"
       }
 
+      function closeMetadata(): void {
+        $("metadataModal").style.display = "none"
+      }
+
       shaven(
         [document.body,
           ["div#wrapper",
@@ -2765,6 +2929,19 @@ function viewController(): Record<string, Function> {
                       "Export playlists"]
                   ]
                 ]
+              ]
+            ],
+            // Metadata dialog: built once alongside the settings modal and
+            // refilled per song, since it is opened from a view that is torn
+            // down and rebuilt on every navigation.
+            ["div#metadataModal", {style: "display:none"},
+              ["div#metadataDialog.modalDialog",
+                ["div.modalHeader",
+                  ["h2#metadataHeading", "Metadata"],
+                  ["button#metadataClose",
+                    { "title": "Close", "aria-label": "Close" }, "×"]
+                ],
+                ["div#metadataBody.modalBody"]
               ]
             ]
           ]
@@ -2850,6 +3027,11 @@ function viewController(): Record<string, Function> {
         closeSettings()
       })
 
+      $("metadataClose").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        closeMetadata()
+      })
+
       // Click on the dim backdrop (outside the dialog) closes the modal;
       // clicks inside the dialog must not bubble up to trigger that.
       $("settingsModal").addEventListener("click", () => closeSettings())
@@ -2857,9 +3039,17 @@ function viewController(): Record<string, Function> {
         e.stopPropagation()
       })
 
+      $("metadataModal").addEventListener("click", () => closeMetadata())
+      $("metadataDialog").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+      })
+
       document.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Escape" &&
-            $("settingsModal").style.display !== "none") {
+        if (e.key !== "Escape") return
+        if ($("metadataModal").style.display !== "none") {
+          closeMetadata()
+        }
+        else if ($("settingsModal").style.display !== "none") {
           closeSettings()
         }
       })
