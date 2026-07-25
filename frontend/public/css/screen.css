@@ -39,6 +39,15 @@
   --overlay-button-active: rgba(255, 255, 255, 0.2);
   --bubble-tail: #323232;
 
+  /* Transport clusters (see #transport / #playModes in player.css). The pill
+     is a translucent overlay rather than a fixed colour so it keeps the same
+     contrast against the nav's vertical gradient all the way down; the play
+     button inside it is marked out by a ring in the same idiom, with no fill
+     of its own. */
+  --bg-control-group: rgba(255, 255, 255, 0.07);
+  --play-border: rgba(255, 255, 255, 0.35);
+  --play-border-hover: rgba(255, 255, 255, 0.7);
+
   /* Shared with player.css */
   --primary-color: #28b4dc;
   --secondary-color: #14788c;
@@ -97,6 +106,10 @@
     --overlay-button-hover: rgba(0, 0, 0, 0.06);
     --overlay-button-active: rgba(0, 0, 0, 0.12);
     --bubble-tail: #f0f0f0;
+
+    --bg-control-group: rgba(0, 0, 0, 0.07);
+    --play-border: rgba(0, 0, 0, 0.3);
+    --play-border-hover: rgba(0, 0, 0, 0.6);
 
     /* Shared with player.css */
     --primary-color: #1e8fb4;
@@ -273,10 +286,11 @@ h3 {
   cursor: pointer;
 }
 
-/* The player controls (#controls and its children: play/previous/next,
-   progress bar, volume, shuffle/repeat/share, etc.) live entirely in
+/* The player controls (#controls and its children: the #transport and
+   #playModes pills, progress bar, volume, share, etc.) live entirely in
    player.css, which loads after this file. Their responsive behaviour is
-   defined there too. */
+   defined there too, as is the #play button's fill, which deliberately
+   outranks the generic `#nav button` colours above. */
 
 /* The rescan and export buttons live in the settings modal as icon + label
    buttons sharing the same pill styling. */

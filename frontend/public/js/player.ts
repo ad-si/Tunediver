@@ -368,13 +368,21 @@ function initPlayer () {
   if (controlsEl) {
     shaven(
       [controlsEl,
-        ["button#previous", {"disabled": "disabled"}],
-        ["button#play", {"class": "paused", "disabled": "disabled"}],
-        ["button#next", {"disabled": "disabled"}],
-        ["button#shuffle"],
-        ["button#repeat"],
+        // Two pill-shaped clusters: the transport proper (what plays), then
+        // the playback modes (how it continues). Grouping them apart from the
+        // loose icons that follow makes the header read as zones rather than
+        // one long row of equally weighted buttons.
+        ["div#transport",
+          ["button#previous", {"disabled": "disabled"}],
+          ["button#play", {"class": "paused", "disabled": "disabled"}],
+          ["button#next", {"disabled": "disabled"}]
+        ],
+        ["div#playModes",
+          ["button#shuffle"],
+          ["button#repeat"]
+        ],
         ["span#time", "0:00"],
-        ["div",
+        ["div#nowPlaying",
           ["p#playerInfo", ""],
           // The seek bar is the range input; the waveform is a sibling layer
           // painted behind it (see setWaveform and #waveform in player.css).

@@ -10,6 +10,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Extra separation from the logo, on top of the 10px flex gap on #nav: the
+     wordmark is the one thing in the header that isn't a control, so it wants
+     more air around it than the controls want between themselves. */
+  margin-left: 8px;
 }
 #controls > * {
   flex: none;
@@ -17,7 +21,7 @@
 /* The middle stack (song title + progress bar) is the only elastic child:
    it absorbs the slack so the transport buttons and volume keep their size
    while the progress bar grows and shrinks with the window. */
-#controls > div {
+#controls > #nowPlaying {
   flex: 1 1 auto;
   /* Cap how wide the song title + progress bar stack can grow on large
      screens; below this it stays elastic and shrinks with the window. */
@@ -27,15 +31,73 @@
   flex-direction: column;
   justify-content: center;
 }
+/* prev/play/next and shuffle/repeat each ride in their own pill, so the two
+   groups read as units instead of five loose icons sharing one flex gap. The
+   pill absorbs the spacing between its own buttons; the gap on #controls only
+   separates the groups from each other and from the progress cluster. */
+#transport,
+#playModes {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-control-group);
+  border-radius: 999px;
+}
+#transport {
+  gap: 2px;
+  /* Equal inset all round, so the pill's ends curve concentrically with the
+     play button's circle. */
+  padding: 3px;
+}
+#playModes {
+  gap: 2px;
+  /* Shorter than the transport pill (no play button inside), and padded to the
+     same optical inset around its buttons. */
+  padding: 3px;
+  /* Widen the gap to the transport pill past the 6px flex gap on #controls,
+     so the two groups don't read as one. */
+  margin-left: 2px;
+}
 #play {
-  height: 40px;
-  width: 40px;
-  /* Negative horizontal margin pulls prev/play/next into a tight transport
-     cluster, offsetting the 6px flex gap on #controls. */
-  margin: 0 -5px;
-  border-radius: 20px;
-  line-height: 40px;
+  height: 32px;
+  width: 32px;
+  border-radius: 16px;
   font-size: 16px;
+}
+/* Set apart from the rest of the pill by a ring alone — no fill. A block of
+   flat colour that size sat too heavily in the nav, and the pill already
+   supplies the group's background, so the outline is all that's needed to
+   mark which button is the primary action. `border` is spelled out because
+   the global reset zeroes it, and box-sizing: border-box keeps the button the
+   size given above rather than growing it by the ring. The #nav prefix
+   outranks the generic `#nav button` colour rules in screen.css so the ring
+   and the glyph can change together on hover/press. */
+#nav #play {
+  border: 1px solid var(--play-border);
+}
+#nav #play:hover {
+  border-color: var(--play-border-hover);
+  color: var(--text-strong);
+}
+#nav #play:active {
+  border-color: var(--accent-active);
+  color: var(--accent-active);
+}
+/* Centre every icon button on its glyph. Inline layout put the glyph on the
+   text baseline, where `vertical-align: middle` only lines it up with the
+   middle of a lowercase x — a couple of pixels high in a box this small, and
+   off by a different amount per glyph size. Flex centring is geometric, so
+   each icon sits in the true centre of its circle whatever its size. */
+#play,
+#previous,
+#next,
+#shuffle,
+#repeat,
+#mute,
+#loud,
+#copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 /* Lucide icons rendered as recolorable masks: the glyph is an SVG mask and
    the fill comes from `currentColor`, so hover/active/theme colors keep
@@ -48,8 +110,7 @@
 #shuffle:before,
 #copy:before {
   content: "";
-  display: inline-block;
-  vertical-align: middle;
+  display: block;
   background-color: currentColor;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
@@ -59,14 +120,14 @@
   mask-size: contain;
 }
 #play.playing:before {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='14' y='3' width='5' height='18' rx='1'/><rect x='5' y='3' width='5' height='18' rx='1'/></svg>");
   mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='14' y='3' width='5' height='18' rx='1'/><rect x='5' y='3' width='5' height='18' rx='1'/></svg>");
 }
 #play.paused:before {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   /* Nudge the play triangle right so it reads as centred in the round button. */
   margin-left: 2px;
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z'/></svg>");
@@ -79,25 +140,26 @@
   cursor: default;
   pointer-events: none;
 }
+/* Uniform round hit areas inside the two pills: without a box of their own
+   these buttons would shrink to their glyph and sit unevenly inset from the
+   pill's rounded ends. */
 #previous,
-#next {
-  height: 30px;
-  line-height: 30px;
-  width: 30px;
-  border-radius: 15px;
+#next,
+#shuffle,
+#repeat {
+  height: 24px;
+  width: 24px;
+  border-radius: 12px;
   font-size: 14px;
 }
 #previous:before,
 #next:before {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 #previous:before {
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17.971 4.285A2 2 0 0 1 21 6v12a2 2 0 0 1-3.029 1.715l-9.997-5.998a2 2 0 0 1-.003-3.432z'/><path d='M3 20V4'/></svg>");
   mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17.971 4.285A2 2 0 0 1 21 6v12a2 2 0 0 1-3.029 1.715l-9.997-5.998a2 2 0 0 1-.003-3.432z'/><path d='M3 20V4'/></svg>");
-}
-#next {
-  margin-right: 8px;
 }
 #next:before {
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 4v16'/><path d='M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z'/></svg>");
@@ -133,7 +195,7 @@
   min-height: 1lh;
   cursor: pointer;
   /* Keep long "Artist - Title" strings from blowing out the controls width;
-     the elastic parent (#controls > div) has min-width: 0 so this can clip. */
+     the elastic parent (#nowPlaying) has min-width: 0 so this can clip. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -473,12 +535,9 @@
 #duration {
   vertical-align: middle;
 }
-/* Add breathing room around the progress-bar cluster (timestamps + bar) by
-   spacing its outer edges from the neighbouring controls, on top of the 6px
-   flex gap on #controls. */
-#time {
-  margin-left: 10px;
-}
+/* The elapsed counter reads as part of the transport it follows, so it keeps
+   only the 6px flex gap on #controls. The remaining counter still needs a
+   margin: what follows it is the volume group, a different zone. */
 #duration {
   margin-right: 10px;
 }
@@ -487,7 +546,6 @@
   height: 18px;
   width: 18px;
   border-radius: 10px;
-  vertical-align: middle;
 }
 #mute {
   margin-left: 8px;
@@ -495,8 +553,7 @@
 #mute:before,
 #loud:before {
   content: "";
-  display: inline-block;
-  vertical-align: middle;
+  display: block;
   width: 18px;
   height: 18px;
   background-color: currentColor;
@@ -517,12 +574,10 @@
 }
 #repeat {
   position: relative;
-  /* Widen the gap between shuffle and repeat beyond the 6px flex gap. */
-  margin-left: 8px;
 }
 #repeat:before {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m17 2 4 4-4 4'/><path d='M3 11v-1a4 4 0 0 1 4-4h14'/><path d='m7 22-4-4 4-4'/><path d='M21 13v1a4 4 0 0 1-4 4H3'/></svg>");
   mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m17 2 4 4-4 4'/><path d='M3 11v-1a4 4 0 0 1 4-4h14'/><path d='m7 22-4-4 4-4'/><path d='M21 13v1a4 4 0 0 1-4 4H3'/></svg>");
 }
@@ -537,8 +592,8 @@
   mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m17 2 4 4-4 4'/><path d='M3 11v-1a4 4 0 0 1 4-4h14'/><path d='m7 22-4-4 4-4'/><path d='M21 13v1a4 4 0 0 1-4 4H3'/><path d='M11 10h1v4'/></svg>");
 }
 #shuffle:before {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m18 14 4 4-4 4'/><path d='m18 2 4 4-4 4'/><path d='M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22'/><path d='M2 6h1.972a4 4 0 0 1 3.6 2.2'/><path d='M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45'/></svg>");
   mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m18 14 4 4-4 4'/><path d='m18 2 4 4-4 4'/><path d='M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22'/><path d='M2 6h1.972a4 4 0 0 1 3.6 2.2'/><path d='M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45'/></svg>");
 }
@@ -562,8 +617,8 @@
 /* Responsive header: as the nav narrows there isn't room for every control,
    so shed the secondary ones from the outside in, keeping the essentials
    (prev / play / next, song title, progress bar) usable the whole way down.
-   The progress bar itself stays elastic via #controls > div, so it keeps
-   shrinking between these breakpoints rather than jumping. */
+   The progress bar itself stays elastic via #controls > #nowPlaying, so it
+   keeps shrinking between these breakpoints rather than jumping. */
 @media (max-width: 880px) {
   /* Volume is adjustable via the OS / keyboard; the slider goes first. */
   #volume,
@@ -587,8 +642,9 @@
 }
 
 @media (max-width: 460px) {
-  #shuffle,
-  #repeat {
+  /* The whole modes pill goes, not just its buttons — an empty pill would
+     still take its padding and background. */
+  #playModes {
     display: none;
   }
   /* Reclaim every spare pixel so the reload/settings icons stay on-screen
@@ -603,10 +659,7 @@
   #controls {
     gap: 4px;
   }
-  #controls > div {
+  #controls > #nowPlaying {
     min-width: 44px;
-  }
-  #next {
-    margin-right: 4px;
   }
 }
