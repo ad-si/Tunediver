@@ -79,5 +79,8 @@ test: build
 	echo "# Get a song's waveform (headers only: the body is 400 peak values)"; \
 	http --headers GET \
 		"http://127.0.0.1:$(TEST_PORT)/api/artists/Fred/songs/Binary%20Dreams/waveform"; \
+	echo "# Get every tag stored in a song's file"; \
+	http GET \
+		"http://127.0.0.1:$(TEST_PORT)/api/artists/Fred/songs/Binary%20Dreams/metadata"; \
 	echo "# Test the 404 error handler"; \
 	http GET "http://127.0.0.1:$(TEST_PORT)/api/nonexistent"
