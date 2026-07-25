@@ -1,28 +1,5 @@
 (() => {
-  const prefersReducedMotion = window.matchMedia(
-    "(prefers-reduced-motion: reduce)"
-  ).matches;
-
-  // Reveal on scroll
-  const revealables = document.querySelectorAll(".reveal");
-  if (prefersReducedMotion || !("IntersectionObserver" in window)) {
-    revealables.forEach((el) => el.classList.add("is-visible"));
-  } else {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("is-visible");
-            observer.unobserve(entry.target);
-          }
-        }
-      },
-      { rootMargin: "0px 0px -10% 0px", threshold: 0.08 }
-    );
-    revealables.forEach((el) => observer.observe(el));
-  }
-
-  // Copy-to-clipboard for code blocks
+  // Copy-to-clipboard for the setup commands
   document.querySelectorAll(".code-block").forEach((block) => {
     const btn = block.querySelector(".copy-btn");
     const code = block.querySelector("code");
@@ -42,7 +19,7 @@
         sel.removeAllRanges();
       }
       const original = btn.textContent;
-      btn.textContent = "Copied";
+      btn.textContent = "OK";
       btn.classList.add("is-copied");
       setTimeout(() => {
         btn.textContent = original;
