@@ -50,6 +50,23 @@ type Artist = {
   slug: string
   country?: string
   bio?: string
+  // Present only on the single-artist response (/artists/<slug>), which
+  // summarizes the artist's catalog entries; the list endpoint omits them.
+  song_count?: number
+  // Oldest/newest release year among those songs. Absent when none of them
+  // carries a date tag.
+  first_year?: number
+  last_year?: number
+  // Genres across those songs with how many carry each, most-used first.
+  genres?: ArtistGenre[]
+}
+
+// One entry of an artist's genre tag cloud; `count` is the weight it's
+// sized by.
+type ArtistGenre = {
+  name: string
+  slug: string
+  count: number
 }
 
 type Genre = {

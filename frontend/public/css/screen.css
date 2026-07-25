@@ -921,11 +921,6 @@ input[type="search"] {
   object-fit: cover;
 }
 
-#c4 #artist img {
-  width: 200px;
-  height: 150px;
-}
-
 /* Clicking the thumbnail opens the artwork full size — unless it fell back to
    the placeholder, which has nothing more to show. */
 #songCover {
@@ -939,6 +934,60 @@ input[type="search"] {
 #c4 nav {
   display: inline-block;
   vertical-align: top;
+}
+
+/* The artist view has no portrait for its credits to sit beside, so the nav
+   spans the column instead of shrink-wrapping like the song view's does. */
+#artistNav {
+  display: block;
+}
+
+/* Song count and release timeframe, directly under the artist's name. */
+#artistStats {
+  margin: 0 0 10px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Every genre the artist's songs are tagged with, as a row of badges ordered
+   by how many songs carry each. */
+#artistGenres {
+  list-style: none;
+  margin: 0 0 14px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* Same pill idiom as the song-detail toolbar (#songActions .songAction), so
+   the app keeps one badge/button look rather than one per view. */
+.artistGenre {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  /* A genre name never breaks across two lines inside its own badge. */
+  white-space: nowrap;
+  color: var(--text-strong);
+  text-decoration: none;
+  cursor: pointer;
+  background-image:
+    linear-gradient(var(--bg-bubble-top), var(--bg-bubble-bottom));
+  border: 1px solid var(--border-button-bottom);
+  font-size: 12px;
+  text-shadow: var(--text-shadow);
+}
+
+.artistGenre:hover {
+  color: var(--accent-hover);
+}
+
+/* The count is supporting detail, so it recedes behind the genre name. */
+.artistGenreCount {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 #c4 button {

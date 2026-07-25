@@ -5,7 +5,7 @@ mod waveform;
 
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::State;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -51,6 +51,10 @@ struct Track {
   // flat list). Empty when the file carries no genre tag — such tracks simply
   // don't surface in the genre browser.
   genres: Vec<String>,
+  // Release year from the file's date tag, when it carries a parseable one.
+  // `None` for untagged files — they simply don't contribute to an artist's
+  // release timeframe rather than being counted as year 0.
+  year: Option<i32>,
   path: PathBuf,
   // URL slug key that `find_track` resolves back to this track. Normally the
   // plain title; when several files share the same (artist, title) it carries
@@ -170,27 +174,57 @@ fn primary_artist(artists: &[String]) -> &str {
     .unwrap_or(UNKNOWN_ARTIST)
 }
 
-// Read the credited artists, title, and genres from the file's embedded tags.
-// Each ARTIST/GENRE field is split on the recognized separators and the
-// results are flattened, so a file that stores multiple values as separate
-// fields *or* as one delimited string both yield the same fully-resolved
-// list. Falls back to ["Unknown Artist"] / "Unknown Title" when tags are
-// missing or unreadable (genres stay empty — no placeholder); never consults
-// the filename or directory name.
-fn read_track_tags(path: &Path) -> (Vec<String>, String, Vec<String>) {
+// Everything `read_track_tags` pulls out of a file's embedded tags in one
+// pass. Grouped in a struct rather than returned as a tuple because the scan
+// is the only caller and a four-element tuple stops being self-describing.
+struct TrackTags {
+  artists: Vec<String>,
+  title: String,
+  genres: Vec<String>,
+  year: Option<i32>,
+}
+
+// The release year out of a date tag value. Tag dates range from a bare
+// "1968" through "1968-05-03" to a full "1968-05-03T00:00:00", so take the
+// leading four-digit run and ignore whatever follows. Values that don't start
+// with a plausible year (blank, "0000", "Unknown") yield None so they can't
+// drag an artist's timeframe back to antiquity.
+fn parse_year(value: &str) -> Option<i32> {
+  let digits: String = value
+    .trim()
+    .chars()
+    .take_while(char::is_ascii_digit)
+    .collect();
+  if digits.len() != 4 {
+    return None;
+  }
+  let year = digits.parse::<i32>().ok()?;
+  // Recorded music starts in the 1800s; anything outside that is a bad tag.
+  (1800..=2999).contains(&year).then_some(year)
+}
+
+// Read the credited artists, title, genres, and release year from the file's
+// embedded tags. Each ARTIST/GENRE field is split on the recognized separators
+// and the results are flattened, so a file that stores multiple values as
+// separate fields *or* as one delimited string both yield the same
+// fully-resolved list. Falls back to ["Unknown Artist"] / "Unknown Title" when
+// tags are missing or unreadable (genres stay empty and the year stays None —
+// no placeholders); never consults the filename or directory name.
+fn read_track_tags(path: &Path) -> TrackTags {
   let tagged = match read_from_path(path) {
     Ok(t) => t,
     Err(_) => {
-      return (
-        vec![UNKNOWN_ARTIST.to_string()],
-        UNKNOWN_TITLE.to_string(),
-        Vec::new(),
-      )
+      return TrackTags {
+        artists: vec![UNKNOWN_ARTIST.to_string()],
+        title: UNKNOWN_TITLE.to_string(),
+        genres: Vec::new(),
+        year: None,
+      }
     }
   };
 
   let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-  let (artists, title, genres) = match tag {
+  let (artists, title, genres, year) = match tag {
     Some(t) => {
       // `Accessor::artist()` yields only the first ARTIST value, silently
       // dropping the rest on files (notably Opus/Vorbis comments) that store
@@ -206,13 +240,27 @@ fn read_track_tags(path: &Path) -> (Vec<String>, String, Vec<String>) {
         .get_strings(lofty::tag::ItemKey::Genre)
         .flat_map(split_genres)
         .collect();
+      // Date keys in preference order: the recording date is what most
+      // taggers write (ID3 TDRC, Vorbis DATE, MP4 ©day), with the release
+      // dates as fallbacks for files that only carry those. Read as raw
+      // strings rather than via `Accessor::date()`, which parses strictly and
+      // drops the common bare-year and partial-date forms.
+      let year = [
+        lofty::tag::ItemKey::RecordingDate,
+        lofty::tag::ItemKey::Year,
+        lofty::tag::ItemKey::ReleaseDate,
+        lofty::tag::ItemKey::OriginalReleaseDate,
+      ]
+      .into_iter()
+      .find_map(|key| t.get_string(key).and_then(parse_year));
       (
         artists,
         t.title().map(|s| s.to_string()).unwrap_or_default(),
         genres,
+        year,
       )
     }
-    None => (Vec::new(), String::new(), Vec::new()),
+    None => (Vec::new(), String::new(), Vec::new(), None),
   };
 
   // An empty list (no/blank ARTIST tags) falls back to the placeholder so the
@@ -230,7 +278,12 @@ fn read_track_tags(path: &Path) -> (Vec<String>, String, Vec<String>) {
   } else {
     title.trim().to_string()
   };
-  (artists, title, genres)
+  TrackTags {
+    artists,
+    title,
+    genres,
+    year,
+  }
 }
 
 // Look up lyrics from whichever tag the file carries, if any.
@@ -543,7 +596,7 @@ fn run_scan(
       }
     }
 
-    let (artists, title, genres) = read_track_tags(path);
+    let tags = read_track_tags(path);
     let lyrics = read_track_lyrics(path);
     let date_added = read_id3v2_user_text(path, "DATE_ADDED");
     let (has_cover, cover_blob, cover_mime) = read_cover(path);
@@ -552,9 +605,10 @@ fn run_scan(
       path: path_str,
       mtime,
       size,
-      artists,
-      title,
-      genres,
+      artists: tags.artists,
+      title: tags.title,
+      genres: tags.genres,
+      year: tags.year.map(i64::from),
       lyrics,
       date_added,
       has_cover,
@@ -987,6 +1041,16 @@ struct SingleSongResponse {
   data: SingleSong,
 }
 
+// One genre the artist's tracks are tagged with, plus how many of them carry
+// it — the weight the frontend sizes its tag cloud by.
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ArtistGenre {
+  name: String,
+  slug: String,
+  count: usize,
+}
+
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
 struct ArtistInfo {
@@ -995,6 +1059,16 @@ struct ArtistInfo {
   bio: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   country: Option<String>,
+  // How many catalog tracks credit this artist.
+  song_count: usize,
+  // Oldest and newest release year among those tracks. Absent when none of
+  // them carries a parseable date tag; both are equal for a single year.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  first_year: Option<i32>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  last_year: Option<i32>,
+  // Genres across those tracks, most-used first (ties broken alphabetically).
+  genres: Vec<ArtistGenre>,
 }
 
 #[derive(Serialize)]
@@ -2049,16 +2123,49 @@ fn push_pictures(
 }
 
 #[get("/artists/<artist>")]
-fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
+fn get_artist_info(
+  artist: &str,
+  config: &State<AppConfig>,
+) -> Json<ArtistInfoResponse> {
   let decoded = urlencoding::decode(artist)
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| artist.to_string());
+
+  let catalog = config.catalog.read().unwrap();
+  let tracks = catalog.tracks_by_artist(&decoded);
+
+  // Genre counts keyed by name; BTreeMap so equally-used genres come out in
+  // alphabetical order after the count sort below.
+  let mut genre_counts: BTreeMap<&str, usize> = BTreeMap::new();
+  let mut years: Vec<i32> = Vec::new();
+  for track in &tracks {
+    for genre in &track.genres {
+      *genre_counts.entry(genre.as_str()).or_insert(0) += 1;
+    }
+    if let Some(year) = track.year {
+      years.push(year);
+    }
+  }
+  let mut genres: Vec<ArtistGenre> = genre_counts
+    .into_iter()
+    .map(|(name, count)| ArtistGenre {
+      slug: encode(name),
+      name: name.to_string(),
+      count,
+    })
+    .collect();
+  genres.sort_by(|a, b| b.count.cmp(&a.count));
+
   Json(ArtistInfoResponse {
     data: ArtistInfo {
       name: decoded.clone(),
       // No real bio/country source yet; omit rather than fabricate.
       bio: None,
       country: None,
+      song_count: tracks.len(),
+      first_year: years.iter().min().copied(),
+      last_year: years.iter().max().copied(),
+      genres,
     },
   })
 }
@@ -2897,11 +3004,24 @@ mod tests {
   fn read_track_tags_returns_unknown_artist_for_unreadable_file() {
     // A path that can't be parsed as audio falls back to the placeholders
     // rather than borrowing identity from the filename.
-    let (artists, title, genres) =
-      read_track_tags(Path::new("/nonexistent/not-audio.mp3"));
-    assert_eq!(artists, vec!["Unknown Artist".to_string()]);
-    assert_eq!(title, "Unknown Title");
-    assert!(genres.is_empty(), "no placeholder genre is invented");
+    let tags = read_track_tags(Path::new("/nonexistent/not-audio.mp3"));
+    assert_eq!(tags.artists, vec!["Unknown Artist".to_string()]);
+    assert_eq!(tags.title, "Unknown Title");
+    assert!(tags.genres.is_empty(), "no placeholder genre is invented");
+    assert_eq!(tags.year, None, "no placeholder year is invented");
+  }
+
+  #[test]
+  fn parse_year_reads_the_common_date_tag_shapes() {
+    assert_eq!(parse_year("1968"), Some(1968));
+    assert_eq!(parse_year("1968-05-03"), Some(1968));
+    assert_eq!(parse_year("1968-05-03T00:00:00"), Some(1968));
+    assert_eq!(parse_year(" 2024 "), Some(2024));
+    // Neither a placeholder nor a partial year is a release year.
+    assert_eq!(parse_year(""), None);
+    assert_eq!(parse_year("0000"), None);
+    assert_eq!(parse_year("68"), None);
+    assert_eq!(parse_year("Unknown"), None);
   }
 
   #[test]
@@ -2924,6 +3044,7 @@ mod tests {
       artists: split_artists(artist),
       title: title.to_string(),
       genres: Vec::new(),
+      year: None,
       path: PathBuf::from(path),
       slug: String::new(),
     };
@@ -2966,6 +3087,7 @@ mod tests {
       artists: split_artists(artist),
       title: format!("Song {}", id),
       genres: Vec::new(),
+      year: None,
       path: PathBuf::from(format!("/{}.mp3", id)),
       slug: format!("Song {}", id),
     };
@@ -3005,6 +3127,7 @@ mod tests {
       artists: vec!["Artist".to_string()],
       title: format!("Song {}", id),
       genres: genres.iter().map(|g| g.to_string()).collect(),
+      year: None,
       path: PathBuf::from(format!("/{}.mp3", id)),
       slug: format!("Song {}", id),
     };

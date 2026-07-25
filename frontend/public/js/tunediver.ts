@@ -1923,6 +1923,24 @@ function metadataValueNode(value: string): any[] {
   return node
 }
 
+// The line under an artist's name: how many of their songs the catalog holds
+// and the span those releases cover ("12 songs · 1968–1975"). A part whose
+// data is missing — untagged release dates, notably — is left out rather than
+// rendered as a placeholder.
+function artistStatsLabel(artist: Artist): string {
+  const parts: string[] = []
+  const count = artist.song_count
+  if (typeof count === "number") {
+    parts.push(count === 1 ? "1 song" : count + " songs")
+  }
+  const first = artist.first_year
+  const last = artist.last_year
+  if (typeof first === "number" && typeof last === "number") {
+    parts.push(first === last ? String(first) : first + "–" + last)
+  }
+  return parts.join(" · ")
+}
+
 // Print namespace/object with rendering functions
 const printObj = {
   artists(): void {
@@ -1992,20 +2010,37 @@ const printObj = {
   },
 
   artist(slug: string): void {
-    // Portrait
     ajax<Artist>(`/artists/${slug}`, (artist) => {
       $("c4").innerHTML = ""
+
+      const genres = artist.genres || []
 
       shaven(
         [$("c4"),
           ["div#artist",
-            ["img", {
-              src: baseURL + "/img/cover-placeholder.svg",
-              alt: "Image of " + artist.name}
-            ],
             ["nav#artistNav",
               ["h2#heading", artist.name],
               ...(artist.country ? [["p#country", artist.country]] : []),
+              ["p#artistStats", artistStatsLabel(artist)],
+              // Every genre this artist's songs are tagged with, as a badge
+              // carrying how many of them use it. Clicking one opens that
+              // genre's song list.
+              ...(genres.length
+                ? [["ul#artistGenres",
+                    ...genres.map((genre) => ["li",
+                      ["a.artistGenre", {
+                        "href": baseURL + "/genres/" + genre.slug,
+                        "data-genre-slug": genre.slug,
+                        "title": genre.count === 1
+                          ? "1 song tagged " + genre.name
+                          : genre.count + " songs tagged " + genre.name,
+                      },
+                        ["span.artistGenreName", genre.name],
+                        ["span.artistGenreCount", String(genre.count)]
+                      ]
+                    ])
+                  ]]
+                : []),
               // Best-effort guess of the artist's Wikipedia article URL from
               // the name (spaces → underscores). Not guaranteed to resolve.
               ["p#wikipedia",
@@ -2022,10 +2057,29 @@ const printObj = {
           ]
         ]
       )
+
+      // Property-assigned so it replaces whatever handler a previously shown
+      // song detail left on the column, rather than stacking on top of it.
+      $("c4").onclick = (e: MouseEvent) => {
+        const target = e.target as HTMLElement
+        // A click lands on the badge's name or count span, so resolve to the
+        // badge itself before reading its slug.
+        const badge = target.closest(".artistGenre") as HTMLElement | null
+        if (badge) {
+          e.preventDefault()
+          const genreSlug = badge.getAttribute("data-genre-slug") || ""
+          const url = "genres/" + genreSlug
+          history.pushState({ "url": url }, genreSlug, baseURL + "/" + url)
+          route(url)
+        }
+      }
     }, $("c4"))
   },
 
-  songs(artistSlug: string): void {
+  // One artist's tracks in c3. `selectedSlug` marks one of them as the open
+  // song, for the same reason the list views take one: a song opened by URL or
+  // back/forward can't highlight a row this call hasn't built yet.
+  songs(artistSlug: string, selectedSlug?: string): void {
     ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
       // Clear the container first
       $("c3").innerHTML = ""
