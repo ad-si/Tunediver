@@ -303,7 +303,6 @@ h3 {
   background-image:
     linear-gradient(var(--bg-bubble-top), var(--bg-bubble-bottom));
   border: 1px solid var(--border-button-bottom);
-  border-top-color: var(--border-button-top);
   border-radius: 6px;
   padding: 8px 14px;
   font-size: 13px;
