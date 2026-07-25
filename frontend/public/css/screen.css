@@ -926,6 +926,16 @@ input[type="search"] {
   height: 150px;
 }
 
+/* Clicking the thumbnail opens the artwork full size — unless it fell back to
+   the placeholder, which has nothing more to show. */
+#songCover {
+  cursor: zoom-in;
+}
+
+#songCover.placeholder {
+  cursor: default;
+}
+
 #c4 nav {
   display: inline-block;
   vertical-align: top;
@@ -1069,6 +1079,49 @@ input[type="search"] {
 #songActions .songAction.copied:before {
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6 9 17l-5-5'/></svg>");
   mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6 9 17l-5-5'/></svg>");
+}
+
+/* Cover lightbox: no dialog chrome, just the artwork on the same dim backdrop
+   the other modals use, capped so it never overflows the viewport. */
+#coverModal {
+  position: fixed;
+  inset: 0;
+  z-index: 11;
+  background: rgba(0, 0, 0, 0.75);
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  cursor: zoom-out;
+}
+
+/* Overrides the `#c4 img` thumbnail rules, which would otherwise size this to
+   160px — the lightbox lives outside c4, but the shadow and radius are worth
+   restating here rather than inheriting nothing. */
+#coverModalImage {
+  max-width: 100%;
+  max-height: 100%;
+  /* Never upscale a small embedded cover into a blurry wall. */
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7);
+}
+
+#coverClose {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 32px;
+  line-height: 1;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+#coverClose:hover {
+  color: var(--text-strong);
 }
 
 /* Metadata dialog: reuses the settings modal's chrome (.modalDialog /

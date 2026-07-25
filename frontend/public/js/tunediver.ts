@@ -1838,6 +1838,17 @@ function showMetadataModal(song: Song, artistSlug: string): void {
   )
 }
 
+// Show the song's artwork full size. The cover URL is the same one the detail
+// view's thumbnail uses — the endpoint serves the embedded image at its
+// original resolution, so the thumbnail is only a CSS downscale and the
+// browser already has the bytes cached.
+function showCoverModal(coverUrl: string, alt: string): void {
+  const image = $("coverModalImage") as HTMLImageElement
+  image.src = coverUrl
+  image.alt = alt
+  $("coverModal").style.display = "flex"
+}
+
 function renderMetadata(data: SongMetadata): void {
   const body = $("metadataBody")
   body.innerHTML = ""
@@ -2202,11 +2213,14 @@ const printObj = {
         ]
       )
 
-      // Fall back to placeholder if no embedded cover art
+      // Fall back to placeholder if no embedded cover art. The fallback is
+      // flagged so the click handler below doesn't blow the placeholder up to
+      // full size — there is nothing to look at.
       const coverImg = document.getElementById("songCover") as HTMLImageElement
       if (coverImg) {
         coverImg.onerror = () => {
           coverImg.onerror = null
+          coverImg.classList.add("placeholder")
           coverImg.src = baseURL + "/img/cover-placeholder.svg"
         }
       }
@@ -2236,6 +2250,15 @@ const printObj = {
           const url = artistPath(slug)
           history.pushState({ "url": url }, slug, baseURL + "/" + url)
           route(url)
+          return false
+        }
+
+        // The thumbnail is a downscale of the embedded artwork, so a click
+        // opens it at full size.
+        if (target.id === "songCover"
+          && !target.classList.contains("placeholder")) {
+          e.stopPropagation()
+          showCoverModal(coverUrl, (target as HTMLImageElement).alt)
           return false
         }
 
@@ -2875,6 +2898,13 @@ function viewController(): Record<string, Function> {
         $("metadataModal").style.display = "none"
       }
 
+      function closeCover(): void {
+        $("coverModal").style.display = "none"
+        // Drop the source so the next open doesn't flash the previous cover
+        // while the new one loads.
+        ;($("coverModalImage") as HTMLImageElement).removeAttribute("src")
+      }
+
       shaven(
         [document.body,
           ["div#wrapper",
@@ -2943,6 +2973,15 @@ function viewController(): Record<string, Function> {
                 ],
                 ["div#metadataBody.modalBody"]
               ]
+            ],
+            // Cover lightbox: the artwork at its own size, with no dialog
+            // chrome around it — the image is the whole content, so a header
+            // bar would only shrink it. Built once for the same reason as the
+            // metadata dialog.
+            ["div#coverModal", {style: "display:none"},
+              ["img#coverModalImage", { "alt": "" }],
+              ["button#coverClose",
+                { "title": "Close", "aria-label": "Close" }, "×"]
             ]
           ]
         ]
@@ -3044,9 +3083,20 @@ function viewController(): Record<string, Function> {
         e.stopPropagation()
       })
 
+      // The lightbox has no inner dialog to shield, so a click anywhere —
+      // including on the image itself — closes it again.
+      $("coverModal").addEventListener("click", () => closeCover())
+      $("coverClose").addEventListener("click", (e: Event) => {
+        e.stopPropagation()
+        closeCover()
+      })
+
       document.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key !== "Escape") return
-        if ($("metadataModal").style.display !== "none") {
+        if ($("coverModal").style.display !== "none") {
+          closeCover()
+        }
+        else if ($("metadataModal").style.display !== "none") {
           closeMetadata()
         }
         else if ($("settingsModal").style.display !== "none") {
