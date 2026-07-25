@@ -1943,7 +1943,11 @@ function artistStatsLabel(artist: Artist): string {
 
 // Print namespace/object with rendering functions
 const printObj = {
-  artists(): void {
+  // List view in c2: every artist in the catalog. `selectedSlug` marks one of
+  // them as the open artist — the list is built here, so an artist opened by
+  // any other route (a URL, back/forward, a song's artist link) has to say so
+  // rather than highlight the row itself.
+  artists(selectedSlug?: string): void {
     store.currentTab = "artists"
     setActiveTab("artists")
     $("wrapper").classList.remove("searchActive")
@@ -2003,6 +2007,10 @@ const printObj = {
         ).rootElement
 
         $("c2").appendChild(container)
+
+        // After the append: `highlight` clears the other rows through the
+        // parent, which a detached element doesn't have yet.
+        if (artist.slug === selectedSlug) highlight(container)
       })
 
       updatePlayingMarkers()
@@ -2105,18 +2113,21 @@ const printObj = {
         const add = shaven(["button#.add"]).rootElement
 
         // Create the song element with the data-id attribute
-        shaven(
-          [$("c3"),
-            ["div#.row", {
-              "data-song-id": songId,
-              "data-artist-slug": artistSlug,
-              "data-song-slug": song.slug,
-            },
-              [play],
-              [link]
-            ]
+        const row = shaven(
+          ["div#.row", {
+            "data-song-id": songId,
+            "data-artist-slug": artistSlug,
+            "data-song-slug": song.slug,
+          },
+            [play],
+            [link]
           ]
-        )
+        ).rootElement
+        $("c3").appendChild(row)
+
+        // After the append: `highlight` clears the other rows through the
+        // parent, which a detached element doesn't have yet.
+        if (song.slug === selectedSlug) highlight(row)
       })
 
       updatePlayingMarkers()
@@ -2480,7 +2491,11 @@ const printObj = {
 
   // List view in c2: all playlists, with a "+ New playlist" row at the top
   // that prompts for a name and creates the playlist via POST.
-  playlists(): void {
+  // List view in c2: every playlist. `selectedId` marks one of them as the
+  // open playlist — the list is built here, so a playlist opened by any other
+  // route (a URL, back/forward) has to say so rather than highlight the row
+  // itself.
+  playlists(selectedId?: string): void {
     store.currentTab = "playlists"
     store.currentPlaylistId = null
     setActiveTab("playlists")
@@ -2538,16 +2553,19 @@ const printObj = {
             e.stopPropagation()
             playFirstPlaylistTrack(playlist.id)
           })
-          shaven(
-            [$("c2"),
-              ["div#.row", {
-                "title": playlist.name,
-                "data-playlist-id": playlist.id,
-              },
-                [link]
-              ]
+          const row = shaven(
+            ["div#.row", {
+              "title": playlist.name,
+              "data-playlist-id": playlist.id,
+            },
+              [link]
             ]
-          )
+          ).rootElement
+          $("c2").appendChild(row)
+
+          // After the append: `highlight` clears the other rows through the
+          // parent, which a detached element doesn't have yet.
+          if (playlist.id === selectedId) highlight(row)
         })
 
       updatePlayingMarkers()
@@ -2772,7 +2790,10 @@ const printObj = {
 
   // List view in c2: every genre found in the catalog's tags. Clicking a
   // genre lists its songs in c3; double-clicking plays the genre's first song.
-  genres(): void {
+  // `selectedSlug` marks one of them as the open genre — the list is built
+  // here, so a genre opened by any other route (a URL, back/forward, an
+  // artist's genre badge) has to say so rather than highlight the row itself.
+  genres(selectedSlug?: string): void {
     store.currentTab = "genres"
     setActiveTab("genres")
     $("wrapper").classList.remove("searchActive")
@@ -2822,6 +2843,10 @@ const printObj = {
           ).rootElement
 
           $("c2").appendChild(container)
+
+          // After the append: `highlight` clears the other rows through the
+          // parent, which a detached element doesn't have yet.
+          if (genre.slug === selectedSlug) highlight(container)
         })
 
       updatePlayingMarkers()
@@ -3171,7 +3196,7 @@ function viewController(): Record<string, Function> {
     },
 
     artist(dir: string): void {
-      printObj.artists()
+      printObj.artists(dir)
       printObj.songs(dir)
       printObj.artist(dir)
     },
@@ -3185,8 +3210,8 @@ function viewController(): Record<string, Function> {
     },
 
     song(artistSlug: string, songSlug: string): void {
-      printObj.artists()
-      printObj.songs(artistSlug)
+      printObj.artists(artistSlug)
+      printObj.songs(artistSlug, songSlug)
       printObj.song(songSlug, artistSlug)
       // Pre-load the track (without starting playback, which browsers block on
       // a fresh page load anyway) so the URL lands ready to play. Only when the
@@ -3213,17 +3238,17 @@ function viewController(): Record<string, Function> {
     },
 
     genre(slug: string): void {
-      printObj.genres()
+      printObj.genres(slug)
       printObj.genreSongs(slug)
     },
 
     playlist(id: string): void {
-      printObj.playlists()
+      printObj.playlists(id)
       printObj.playlist(id)
     },
 
     playlistTrack(id: string, indexStr: string): void {
-      printObj.playlists()
+      printObj.playlists(id)
       printObj.playlist(id)
       // After the playlist renders, highlight + open the indexed track.
       // printObj.playlist completes inside an ajax callback, so defer.
