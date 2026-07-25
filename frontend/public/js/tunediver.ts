@@ -998,9 +998,10 @@ function playPlaylistTrack(
   playlistId: string,
   index: number,
   track: PlaylistTrack,
+  autoplay: boolean = true,
 ): void {
   if (!track.available) return
-  playSong(track as unknown as Song, track.artist_slug, false)
+  playSong(track as unknown as Song, track.artist_slug, false, autoplay)
   if (store.currentlyPlaying) {
     store.currentlyPlaying.playlistId = playlistId
     store.currentlyPlaying.playlistIndex = index
@@ -2927,6 +2928,12 @@ function viewController(): Record<string, Function> {
           `.row[data-playlist-index="${idx}"]`
         ) as HTMLElement | null
         if (row) highlight(row)
+        // Pre-load the track (without starting playback, which browsers block
+        // on a fresh page load anyway) so the URL lands ready to play, with
+        // the playlist context set for prev/next. Only when the player is
+        // still empty — on back/forward navigation this must not yank out a
+        // song that is already loaded or playing.
+        if (!audio.src) playPlaylistTrack(playlist.id, idx, track, false)
       })
     },
   }
