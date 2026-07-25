@@ -43,6 +43,18 @@
   --primary-color: #28b4dc;
   --secondary-color: #14788c;
   --highlight-color: #aaeeff;
+  /* The not-yet-played part of the transport's waveform: legible against the
+     nav, but clearly recessive next to the accent-coloured played part. */
+  --waveform-idle: #6e6e6e;
+  /* Playhead line on top of the waveform; needs contrast against both halves
+     of it, so it isn't reused from the accent colours. */
+  --playhead-color: #ffffff;
+  /* Time-ruler ticks and the hover ghost. Deliberately low-contrast: they are
+     a scale to read against the waveform, not competition for it. */
+  --ruler-tick: rgba(255, 255, 255, 0.3);
+  --ruler-tick-strong: rgba(255, 255, 255, 0.55);
+  --ruler-tick-major: rgba(255, 255, 255, 0.35);
+  --ghost-color: rgba(255, 255, 255, 0.55);
   --shadow-color: rgba(0, 0, 0, 0.6);
   --light-shadow-color: rgba(255, 255, 255, 0.2);
   --dark-shadow-color: #000;
@@ -90,6 +102,12 @@
     --primary-color: #1e8fb4;
     --secondary-color: #14788c;
     --highlight-color: #aaeeff;
+    --waveform-idle: #b4b4b4;
+    --playhead-color: #1e1e1e;
+    --ruler-tick: rgba(0, 0, 0, 0.3);
+    --ruler-tick-strong: rgba(0, 0, 0, 0.5);
+    --ruler-tick-major: rgba(0, 0, 0, 0.25);
+    --ghost-color: rgba(0, 0, 0, 0.5);
     --shadow-color: rgba(0, 0, 0, 0.25);
     --light-shadow-color: rgba(255, 255, 255, 0.6);
     --dark-shadow-color: rgba(0, 0, 0, 0.2);
@@ -209,7 +227,13 @@ h3 {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 14px;
+  /* One symmetric inset, and the height follows whatever the tallest control
+     turns out to be. The transport has grown twice (a waveform, then a time
+     ruler under it) and each time it outgrew the fixed height this used to
+     have; sizing from the content instead means the next change to it doesn't
+     need this rule touched at all. min-height is only a floor for the case
+     where there is no transport to measure. */
+  padding: 7px 14px;
   min-height: 60px;
 }
 

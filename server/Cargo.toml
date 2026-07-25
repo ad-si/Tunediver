@@ -13,3 +13,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 rust-embed = "8"
+# Pure-Rust decoding, used only to reduce a track to waveform peaks (the audio
+# itself is streamed to the browser untouched). The default features cover
+# flac/wav/ogg-vorbis; the rest of the library's formats need opting in.
+symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4", "alac"] }

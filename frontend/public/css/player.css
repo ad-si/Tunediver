@@ -122,6 +122,15 @@
 #playerInfo {
   font-size: 11px;
   line-height: 1.2;
+  /* Hold the line open while empty. A block with no content has no line box at
+     all, so before anything has been played this collapses to nothing and the
+     waveform, its ruler and the whole header sit 13px higher — then jump down
+     the moment a title appears. The height belongs to the slot, not to whether
+     it currently has text in it. Both declarations are the same number today;
+     `lh` keeps it that way if line-height above ever changes, and browsers
+     without `lh` keep the em fallback. */
+  min-height: 1.2em;
+  min-height: 1lh;
   cursor: pointer;
   /* Keep long "Artist - Title" strings from blowing out the controls width;
      the elastic parent (#controls > div) has min-width: 0 so this can clip. */
@@ -138,61 +147,275 @@
 #playerInfo .playerArtist:hover {
   text-decoration: underline;
 }
-#progressInput {
+/* The elapsed and remaining readouts flank the seek bar, so anything that
+   changes their width shoves it (and the song title above it) sideways as the
+   track plays. Two separate causes: the font's digits are proportional, so
+   "1:11" is a pixel narrower than "3:33", fixed by asking for tabular figures;
+   and passing ten minutes adds a digit, fixed by reserving the width of the
+   longest string each normally holds. Both are aligned towards the bar, so the
+   reserved slack sits on the outside where nothing depends on it. The
+   reservation covers everything up to "99:59"; a track longer than that grows
+   past it, which min-width permits — clipping the time would be worse than a
+   shift no one in this collection will see. */
+#time,
+#duration {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+#time {
+  min-width: 36px;
+  text-align: right;
+}
+#duration {
+  min-width: 44px;
+  text-align: left;
+}
+/* The seek bar is two stacked layers: the track's waveform, and a range input
+   made transparent on top of it. Keeping the native input means click, drag
+   and keyboard seeking work as they always did — only the paint changed.
+   --progress (written by playerUpdater on this container, so both layers
+   inherit it) splits the waveform into its played and unplayed halves and
+   positions the playhead. */
+#progress {
+  position: relative;
   width: 100%;
   min-width: 0;
-  height: 8px;
-  margin: 4px 0 0 0;
-  cursor: pointer;
-  /* Custom styling for webkit browsers */
-  -webkit-appearance: none;
-  background-color: var(--background-color);
-  border-radius: 4px;
-  box-shadow:
-    inset 0px 1px 1px var(--dark-shadow-color),
-    0px 1px var(--light-shadow-color);
+  /* --waveform-height for the bar itself plus the strip below it that carries
+     the ruler's labels. Kept as a variable because the waveform, the ruler
+     gridlines, the ghost and the playhead all have to agree on where the bar
+     ends and the labels begin. */
+  --waveform-height: 28px;
+  /* The playhead's grab disk: its width also sets how far the input has to
+     overhang the bar (see #progressInput), and --playhead-rise lifts it clear
+     of the waveform's top edge so it marks the position without covering the
+     shape it points at. */
+  --playhead-width: 7px;
+  --playhead-radius: 3.5px;
+  --playhead-rise: 5px;
+  --playhead-height: calc(var(--waveform-height) + var(--playhead-rise));
+  height: 45px;
+  margin-top: 3px;
 }
 
-/* Styling for the thumb (handle) */
+#waveform {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--waveform-height);
+  /* Played part in the accent colour, the rest muted, with a hard stop at the
+     playhead — no gradient blur between the two. */
+  background-image: linear-gradient(
+    to right,
+    var(--primary-color) 0 var(--progress, 0%),
+    var(--waveform-idle) var(--progress, 0%) 100%
+  );
+  /* The shape of the track, cut out of that gradient. Per-track waveforms are
+     written to --waveform-mask by setWaveform (player.ts); this default is
+     what shows before one arrives and for files the server can't decode: a
+     plain bar, i.e. the seek bar this replaced. The mask is stretched to the
+     element's box (mask-size + the SVG's preserveAspectRatio='none') so one
+     shape covers every width the elastic transport takes. */
+  --waveform-mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><rect x='0' y='45' width='100' height='10'/></svg>");
+  -webkit-mask-image: var(--waveform-mask);
+  mask-image: var(--waveform-mask);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  /* Purely decorative: every pointer event belongs to the input above it. */
+  pointer-events: none;
+}
+
+#progressInput {
+  position: absolute;
+  top: calc(var(--playhead-rise) * -1);
+  /* A range input insets its thumb's travel by half the thumb's width at each
+     end, so a playhead this wide would stop short of both edges and disagree
+     with the waveform's own 0-100% fill. Overhanging the bar by exactly that
+     half-width at each end cancels the inset: the playhead now reaches both
+     ends precisely. The overhang is invisible (the input is transparent) and
+     only extends the click target a few pixels past the bar. */
+  left: calc(var(--playhead-width) / -2);
+  width: calc(100% + var(--playhead-width));
+  /* Only the waveform seeks; the label strip below it is a read-only ruler.
+     The extra height above the bar is headroom for the disk, which sits at the
+     top of the thumb and so needs the thumb to start above the waveform. */
+  height: var(--playhead-height);
+  margin: 0;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Transparent throughout: the waveform layer below provides the visuals,
+     apart from the thumb, which doubles as the playhead. */
+  background: transparent;
+}
+
+/* The thumb is drawn as a playhead: a thin line down the bar with a disk at
+   its top to grab, rather than the usual centred knob, which would hide the
+   waveform behind it. Both parts are backgrounds of the one thumb box — a
+   separate element for the disk would have to be kept in sync with the thumb's
+   position on every frame of a drag, and could drift. Painting them as
+   gradients rather than an SVG keeps the theme colour a live variable. */
 #progressInput::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 8px;
-  background-image: linear-gradient(#ffffff, #cccccc);
+  width: var(--playhead-width);
+  height: var(--playhead-height);
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(
+      circle at var(--playhead-radius) var(--playhead-radius),
+      var(--playhead-color) calc(var(--playhead-radius) - 0.5px),
+      transparent var(--playhead-radius)
+    ),
+    linear-gradient(var(--playhead-color), var(--playhead-color));
+  background-size: var(--playhead-width) var(--playhead-width), 2px 100%;
+  background-position: 0 0, center 0;
+  /* drop-shadow follows the drawn shape; box-shadow would outline the whole
+     transparent box instead. */
+  filter: drop-shadow(0px 0px 2px var(--shadow-color));
   cursor: pointer;
-  box-shadow: 0px 1px 2px var(--shadow-color);
-  position: relative;
-  top: -4px;
 }
 
 #progressInput::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 6px;
-  background-image: linear-gradient(#ffffff, #cccccc);
-  cursor: pointer;
-  box-shadow: 0px 1px 2px var(--shadow-color);
+  width: var(--playhead-width);
+  height: var(--playhead-height);
   border: none;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(
+      circle at var(--playhead-radius) var(--playhead-radius),
+      var(--playhead-color) calc(var(--playhead-radius) - 0.5px),
+      transparent var(--playhead-radius)
+    ),
+    linear-gradient(var(--playhead-color), var(--playhead-color));
+  background-size: var(--playhead-width) var(--playhead-width), 2px 100%;
+  background-position: 0 0, center 0;
+  filter: drop-shadow(0px 0px 2px var(--shadow-color));
+  cursor: pointer;
 }
 
-/* Styling for the track (progress bar) */
 #progressInput::-webkit-slider-runnable-track {
-  background-image: linear-gradient(var(--primary-color), var(--secondary-color));
-  background-size: var(--progress, 0%) 100%;
-  background-repeat: no-repeat;
-  background-color: transparent;
-  height: 8px;
-  border-radius: 4px;
+  height: var(--playhead-height);
+  background: transparent;
 }
 
 #progressInput::-moz-range-track {
-  background-image: linear-gradient(var(--primary-color), var(--secondary-color));
-  background-size: var(--progress, 0%) 100%;
-  background-repeat: no-repeat;
-  background-color: transparent;
-  height: 8px;
-  border-radius: 4px;
+  height: var(--playhead-height);
+  background: transparent;
+}
+
+/* Time ruler. Labelled gridlines cross the waveform at round intervals, with
+   unlabelled minor ticks between them; renderTimeRuler (player.ts) picks the
+   interval from the duration and the current width and builds these nodes.
+   Both layers are decorative — pointer events belong to the input. */
+#waveformTicks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--waveform-height);
+  pointer-events: none;
+}
+
+/* Gridline at each labelled interval, running the height of the bar so the
+   waveform can be read against the label below it. Faint: it sits under the
+   shape rather than competing with it. */
+#waveformTicks .gridline {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: var(--waveform-height);
+  background-color: var(--ruler-tick-major);
+}
+
+#waveformAxis {
+  position: absolute;
+  top: var(--waveform-height);
+  left: 0;
+  right: 0;
+  /* Tall enough for the tick marks plus the labels that hang below them. */
+  height: 17px;
+  pointer-events: none;
+}
+
+/* The scale proper: a short mark per minor interval, a taller one per labelled
+   interval, both in the clear strip below the bar. */
+#waveformAxis .tick {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 4px;
+  background-color: var(--ruler-tick);
+}
+
+/* Only a little taller than a minor tick — the brightness difference and the
+   label beneath are what really separate the two, so the height only has to
+   hint at the hierarchy. */
+#waveformAxis .tick.major {
+  height: 6px;
+  background-color: var(--ruler-tick-strong);
+}
+
+#waveformAxis .tickLabel {
+  position: absolute;
+  /* Clears the tallest tick so no label is struck through by its own mark. */
+  top: 7px;
+  /* Centred on its gridline; renderTimeRuler drops the labels near either end
+     that would be clipped by the transport's edge. */
+  transform: translateX(-50%);
+  font-size: 9px;
+  line-height: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The 0:00 label starts at its tick rather than straddling it — centred, half
+   of it would sit outside the bar. */
+#waveformAxis .tickLabel.atStart {
+  transform: none;
+}
+
+/* Ghost playhead: where a click would seek to, and the time it would seek to,
+   shown while the pointer is over the bar. Dashed so it never reads as the
+   real playhead, which is solid. */
+#waveformGhost {
+  position: absolute;
+  top: 0;
+  height: var(--waveform-height);
+  width: 0;
+  border-left: 1px dashed var(--ghost-color);
+  display: none;
+  pointer-events: none;
+}
+
+#progress.hovering #waveformGhost {
+  display: block;
+}
+
+#waveformGhostTime {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 12px;
+  border-radius: 2px;
+  white-space: nowrap;
+  color: var(--text-strong);
+  background-color: var(--bg-nav-bottom);
+  /* The bar's own colours run right up to the readout, so it needs an edge to
+     stay legible over both halves of the waveform. */
+  border: 1px solid var(--ghost-color);
+}
+
+/* Past ~85% along, a readout on the right of the line would spill out of the
+   transport, so it swaps sides. */
+#waveformGhost.flipped #waveformGhostTime {
+  left: auto;
+  right: 3px;
 }
 #volume {
   width: 120px;

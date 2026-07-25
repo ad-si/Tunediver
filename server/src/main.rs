@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate rocket;
 mod db;
+mod waveform;
 
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::State;
@@ -1238,6 +1239,88 @@ fn get_song_cover(
   Ok((content_type, data))
 }
 
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct WaveformResponse {
+  // One 0-255 amplitude value per horizontal slice of the track, normalized so
+  // the loudest moment of the track is 255.
+  peaks: Vec<u8>,
+}
+
+// Serve the amplitude peaks the transport draws its waveform from.
+//
+// Producing them means decoding the entire file, which takes seconds, so the
+// result is cached in the DB and only recomputed when the file changes. The
+// decode runs on a blocking thread so it can't stall the async workers serving
+// everything else. 404 means no waveform is available (unknown track, or a
+// codec the decoder can't read) and the client falls back to a plain bar.
+#[get("/artists/<artist>/songs/<song>/waveform")]
+async fn get_song_waveform(
+  artist: &str,
+  song: &str,
+  config: &State<AppConfig>,
+) -> Result<Json<WaveformResponse>, NotFound<String>> {
+  let decoded_artist = urlencoding::decode(artist)
+    .map(|s| s.into_owned())
+    .unwrap_or_else(|_| artist.to_string());
+
+  let path = {
+    let catalog = config.catalog.read().unwrap();
+    let track = catalog
+      .find_track(&decoded_artist, song)
+      .ok_or_else(|| NotFound("Track not found".to_string()))?;
+    track.path.clone()
+  };
+
+  let pool = config.pool.clone();
+  let peaks = rocket::tokio::task::spawn_blocking(move || {
+    cached_waveform_peaks(&pool, &path)
+  })
+  .await
+  .map_err(|_| NotFound("Waveform extraction failed".to_string()))?
+  .ok_or_else(|| NotFound("No waveform available".to_string()))?;
+
+  Ok(Json(WaveformResponse { peaks }))
+}
+
+// Peaks for one file, from the cache when they're there and by decoding the
+// file when they aren't. Blocking, and slow on a cache miss. Returns None for
+// a file that can't be decoded — which is cached too, so the next request for
+// the same track doesn't pay for the failed decode again.
+fn cached_waveform_peaks(pool: &db::Pool, path: &Path) -> Option<Vec<u8>> {
+  let path_str = path.to_string_lossy().to_string();
+  let (mtime, size) = file_stamp(path);
+  let buckets = waveform::BUCKETS as i64;
+
+  let version = waveform::PEAKS_VERSION;
+
+  let conn = pool.get().ok()?;
+  match db::get_waveform(&conn, &path_str, mtime, size, buckets, version) {
+    Ok(Some(db::CachedWaveform::Peaks(peaks))) => return Some(peaks),
+    Ok(Some(db::CachedWaveform::Unavailable)) => return None,
+    Ok(None) => {}
+    Err(err) => eprintln!("Waveform cache read failed for {path_str}: {err}"),
+  }
+
+  let peaks = waveform::compute_peaks(path);
+  // A track the scan hasn't reached yet has no `tracks` row for the waveform's
+  // foreign key to reference, so this write fails and the peaks are recomputed
+  // on a later request — worth it to keep stale waveforms from outliving their
+  // track.
+  if let Err(err) = db::set_waveform(
+    &conn,
+    &path_str,
+    mtime,
+    size,
+    buckets,
+    version,
+    peaks.as_deref(),
+  ) {
+    eprintln!("Waveform cache write failed for {path_str}: {err}");
+  }
+  peaks
+}
+
 #[get("/artists/<artist>")]
 fn get_artist_info(artist: &str) -> Json<ArtistInfoResponse> {
   let decoded = urlencoding::decode(artist)
@@ -1944,6 +2027,7 @@ fn rocket() -> _ {
         get_artist_info,
         get_song,
         get_song_cover,
+        get_song_waveform,
         get_music_file,
         reload_catalog,
         scan_status,

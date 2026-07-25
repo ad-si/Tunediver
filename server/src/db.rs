@@ -1,11 +1,11 @@
 // SQLite caching layer.
 //
 // The cache holds everything *except* the raw audio bytes: per-track tag
-// metadata (artist, title, lyrics, DATE_ADDED), embedded cover art, and the
-// user's playlists. Requests serve from here so the (potentially slow) audio
-// files are only ever touched to stream audio. A background scan keeps the
-// `tracks` table in sync, re-reading tags only for files whose mtime/size
-// changed.
+// metadata (artist, title, lyrics, DATE_ADDED), embedded cover art, waveform
+// peaks, and the user's playlists. Requests serve from here so the
+// (potentially slow) audio files are only ever touched to stream audio. A
+// background scan keeps the `tracks` table in sync, re-reading tags only for
+// files whose mtime/size changed.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,15 @@ pub type Conn = r2d2::PooledConnection<SqliteConnectionManager>;
 // Cover art as cached for a track: (has_cover, bytes, mime). `has_cover ==
 // false` is a cached negative result, so missing art is never re-probed.
 pub type CachedCover = (bool, Option<Vec<u8>>, Option<String>);
+
+// Waveform peaks as cached for a track. `Unavailable` is a cached negative
+// result — the file was decoded once and yielded nothing (an unsupported codec,
+// say) — so an undecodable track isn't re-decoded on every play.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CachedWaveform {
+  Peaks(Vec<u8>),
+  Unavailable,
+}
 
 // Technical audio properties read from the file's stream, as opposed to its
 // tags: playback length, bitrate, sample rate, bit depth, channel count, and
@@ -135,6 +144,14 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        path       TEXT PRIMARY KEY REFERENCES tracks(path) ON DELETE CASCADE,
        cover_blob BLOB NOT NULL,
        cover_mime TEXT
+     );
+     CREATE TABLE IF NOT EXISTS track_waveforms (
+       path    TEXT PRIMARY KEY REFERENCES tracks(path) ON DELETE CASCADE,
+       mtime   INTEGER NOT NULL,
+       size    INTEGER NOT NULL,
+       buckets INTEGER NOT NULL,
+       peaks   BLOB,
+       peaks_v INTEGER
      );",
   )?;
   // Migrate databases created before `tracks.artist` became the JSON-array
@@ -174,6 +191,13 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        WHERE substr(playlist_id, 1, 3) = 'pl_';
      PRAGMA foreign_keys=ON;",
   )?;
+  // Migrate waveform rows cached before `peaks_v` recorded which version of
+  // the extractor produced them. NULL reads as older than any version, so
+  // those rows are recomputed on their next request.
+  if !column_exists(conn, "track_waveforms", "peaks_v")? {
+    conn
+      .execute("ALTER TABLE track_waveforms ADD COLUMN peaks_v INTEGER", [])?;
+  }
   // Migrate databases created before the genres and technical audio-property
   // columns existed. Existing rows get NULLs; audio properties are backfilled
   // lazily by the detail endpoint (see `get_track_properties`), genres by the
@@ -494,6 +518,58 @@ pub fn get_cover(
       |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
     )
     .optional()
+}
+
+// Waveform values for the waveform endpoint, or None when nothing usable is
+// cached. Unlike tags, waveforms are computed lazily on first request rather
+// than by the scan, so the row carries its own stamps: `mtime`/`size` catch an
+// edited file, `buckets` a resolution change, and `peaks_v` a change to how the
+// shape is measured. A mismatch on any of them reads as uncached and triggers a
+// recompute, so an algorithm change heals old rows instead of leaving the
+// library drawn half one way and half the other.
+pub fn get_waveform(
+  conn: &Conn,
+  path: &str,
+  mtime: i64,
+  size: i64,
+  buckets: i64,
+  peaks_v: i64,
+) -> rusqlite::Result<Option<CachedWaveform>> {
+  let cached = conn
+    .query_row(
+      "SELECT peaks FROM track_waveforms
+       WHERE path = ?1 AND mtime = ?2 AND size = ?3 AND buckets = ?4
+         AND peaks_v = ?5",
+      params![path, mtime, size, buckets, peaks_v],
+      |r| r.get::<_, Option<Vec<u8>>>(0),
+    )
+    .optional()?;
+  Ok(cached.map(|peaks| match peaks {
+    Some(peaks) => CachedWaveform::Peaks(peaks),
+    None => CachedWaveform::Unavailable,
+  }))
+}
+
+// Cache a track's waveform, or `None` to record that the file couldn't be
+// decoded.
+pub fn set_waveform(
+  conn: &Conn,
+  path: &str,
+  mtime: i64,
+  size: i64,
+  buckets: i64,
+  peaks_v: i64,
+  peaks: Option<&[u8]>,
+) -> rusqlite::Result<()> {
+  conn.execute(
+    "INSERT INTO track_waveforms (path, mtime, size, buckets, peaks_v, peaks)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(path) DO UPDATE SET
+       mtime=excluded.mtime, size=excluded.size, buckets=excluded.buckets,
+       peaks_v=excluded.peaks_v, peaks=excluded.peaks",
+    params![path, mtime, size, buckets, peaks_v, peaks],
+  )?;
+  Ok(())
 }
 
 // Playlists -------------------------------------------------------------------

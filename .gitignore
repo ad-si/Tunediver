@@ -9,3 +9,8 @@ target/
 tunediver-cache.db
 tunediver-cache.db-wal
 tunediver-cache.db-shm
+
+# The same cache as written by the makefile's dev (make start) and smoke-test
+# (make test) targets, which each keep their own DB under server/.
+tunediver.db*
+tunediver-test.db*

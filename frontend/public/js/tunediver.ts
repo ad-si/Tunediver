@@ -584,6 +584,11 @@ function playSong(
     // only show once playback actually starts (store.playState === "playing").
     store.currentlyPlaying = { artistSlug: artistName, songSlug: song.slug }
 
+    // Paint the new track's shape behind the seek bar. Fire-and-forget: the
+    // bar stays usable (as a flat bar) while the server computes it, and for
+    // tracks it can't decode at all.
+    loadWaveform(artistName, song.slug)
+
     // Record play history for shuffle's recent-repeat avoidance. Only count
     // tracks that actually start playing, not ones merely pre-loaded (the
     // landing-page random preload passes autoplay = false).
