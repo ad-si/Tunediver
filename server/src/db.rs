@@ -62,6 +62,11 @@ pub struct CachedTrack {
   // Release year from the file's date tag, `None` when it carries none that
   // parses. Stored in the `year` column.
   pub year: Option<i64>,
+  // The same date tag as the display-ready string it stores ("1968",
+  // "1968-05", "1968-05-03"), so the detail view can show the full date rather
+  // than just the year it was reduced to. `None` exactly when `year` is.
+  // Stored in the `release_date` column.
+  pub release_date: Option<String>,
   pub lyrics: Option<String>,
   pub date_added: Option<String>,
   pub has_cover: bool,
@@ -117,6 +122,7 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
        title      TEXT NOT NULL,
        genres     TEXT,
        year       INTEGER,
+       release_date TEXT,
        lyrics     TEXT,
        date_added TEXT,
        has_cover  INTEGER NOT NULL DEFAULT 0,
@@ -210,9 +216,15 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   // `tags_v` records which tag-reading version produced each row (see
   // CURRENT_TAGS_VERSION); existing rows default to NULL, which reads as older
   // than any version and so triggers a one-time re-read on the next scan.
+  // `release_date` deliberately does *not* come with a tags_v bump: re-reading
+  // every file on a large library sitting on slow removable storage costs
+  // hours, and the string is derivable from the very tag the row's `year`
+  // already came from. The detail endpoint backfills it per track on first
+  // view instead (see `update_track_release_date`).
   for (column, ty) in [
     ("genres", "TEXT"),
     ("year", "INTEGER"),
+    ("release_date", "TEXT"),
     ("duration_secs", "INTEGER"),
     ("bitrate_kbps", "INTEGER"),
     ("sample_rate_hz", "INTEGER"),
@@ -319,13 +331,14 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
   let tx = conn.unchecked_transaction()?;
   tx.execute(
     "INSERT INTO tracks
-       (path, mtime, size, artists, title, genres, year, lyrics, date_added,
-        has_cover, duration_secs, bitrate_kbps, sample_rate_hz, bit_depth,
-        channels, format, tags_v)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+       (path, mtime, size, artists, title, genres, year, release_date, lyrics,
+        date_added, has_cover, duration_secs, bitrate_kbps, sample_rate_hz,
+        bit_depth, channels, format, tags_v)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
      ON CONFLICT(path) DO UPDATE SET
        mtime=excluded.mtime, size=excluded.size, artists=excluded.artists,
        title=excluded.title, genres=excluded.genres, year=excluded.year,
+       release_date=excluded.release_date,
        lyrics=excluded.lyrics, date_added=excluded.date_added,
        has_cover=excluded.has_cover, duration_secs=excluded.duration_secs,
        bitrate_kbps=excluded.bitrate_kbps, sample_rate_hz=excluded.sample_rate_hz,
@@ -339,6 +352,7 @@ pub fn upsert_track(conn: &Conn, t: &CachedTrack) -> rusqlite::Result<()> {
       t.title,
       genres_json,
       t.year,
+      t.release_date,
       t.lyrics,
       t.date_added,
       t.has_cover as i64,
@@ -443,19 +457,39 @@ pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
   Ok(crate::Catalog { tracks })
 }
 
-// Lyrics + DATE_ADDED for the song-detail endpoint. Returns None if the track
-// has not been cached yet (e.g. an in-flight initial scan).
+// Lyrics + DATE_ADDED + release date for the song-detail endpoint. Returns
+// None if the track has not been cached yet (e.g. an in-flight initial scan).
+// A `None` release date on a row whose `year` is set means the row predates
+// the column, signaling the caller to backfill it from disk.
+pub type TrackDetail = (Option<String>, Option<String>, Option<String>);
+
 pub fn get_track_detail(
   conn: &Conn,
   path: &str,
-) -> rusqlite::Result<Option<(Option<String>, Option<String>)>> {
+) -> rusqlite::Result<Option<TrackDetail>> {
   conn
     .query_row(
-      "SELECT lyrics, date_added FROM tracks WHERE path = ?1",
+      "SELECT lyrics, date_added, release_date FROM tracks WHERE path = ?1",
       params![path],
-      |r| Ok((r.get(0)?, r.get(1)?)),
+      |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )
     .optional()
+}
+
+// Lazily backfill the release-date column for an already-cached track, leaving
+// every other column (tags, cover, stamps) untouched. Used when the detail
+// endpoint reads a row written before the column existed; adding it via a
+// tags_v bump would re-read the whole library instead.
+pub fn update_track_release_date(
+  conn: &Conn,
+  path: &str,
+  release_date: Option<&str>,
+) -> rusqlite::Result<()> {
+  conn.execute(
+    "UPDATE tracks SET release_date=?2 WHERE path=?1",
+    params![path, release_date],
+  )?;
+  Ok(())
 }
 
 // Technical audio properties + on-disk file size for the song-detail endpoint,
@@ -703,6 +737,7 @@ mod tests {
       title: "Title".to_string(),
       genres: Vec::new(),
       year: None,
+      release_date: None,
       lyrics: None,
       date_added: None,
       has_cover: false,
@@ -861,15 +896,42 @@ mod tests {
     let mut t = sample_track("/m/a.mp3");
     t.lyrics = Some("la la".to_string());
     t.date_added = Some("2024-01-01".to_string());
+    t.release_date = Some("1968-05-03".to_string());
     upsert_track(&conn, &t).unwrap();
 
     let got = get_track_detail(&conn, "/m/a.mp3").unwrap();
     assert_eq!(
       got,
-      Some((Some("la la".to_string()), Some("2024-01-01".to_string())))
+      Some((
+        Some("la la".to_string()),
+        Some("2024-01-01".to_string()),
+        Some("1968-05-03".to_string()),
+      ))
     );
     // Unknown path → None (e.g. an in-flight initial scan).
     assert_eq!(get_track_detail(&conn, "/m/missing.mp3").unwrap(), None);
+  }
+
+  #[test]
+  fn release_date_backfills_without_touching_other_columns() {
+    let pool = temp_pool("release_date_backfill");
+    let conn = pool.get().unwrap();
+    // A row as written before the column existed: a year, but no date string.
+    let mut t = sample_track("/m/a.mp3");
+    t.year = Some(1968);
+    t.lyrics = Some("la la".to_string());
+    upsert_track(&conn, &t).unwrap();
+
+    update_track_release_date(&conn, "/m/a.mp3", Some("1968-05-03")).unwrap();
+    assert_eq!(
+      get_track_detail(&conn, "/m/a.mp3").unwrap(),
+      Some((
+        Some("la la".to_string()),
+        None,
+        Some("1968-05-03".to_string())
+      ))
+    );
+    assert_eq!(load_catalog(&conn).unwrap().tracks[0].year, Some(1968));
   }
 
   #[test]

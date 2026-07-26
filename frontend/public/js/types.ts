@@ -13,6 +13,9 @@ type Song = {
   file_name?: string
   file_path?: string
   date_added?: string
+  // The file's date tag, as much of it as it carried: "1968", "1968-05" or
+  // "1968-05-03". Absent when it carries none that parses.
+  release_date?: string
   // Technical audio properties, present only on the single-song detail
   // response and only when known (the server omits unknown fields).
   duration_secs?: number

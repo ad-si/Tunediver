@@ -1666,6 +1666,9 @@ function formatChannels(channels: number): string {
 // `:empty` CSS rule hides).
 function songMetaNode(song: Song): any[] {
   const rows: [string, string][] = []
+  if (song.release_date) {
+    rows.push(["Released", song.release_date])
+  }
   if (song.duration_secs != null) {
     rows.push(["Length", formatDuration(song.duration_secs)])
   }

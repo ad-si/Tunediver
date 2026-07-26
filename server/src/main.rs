@@ -182,25 +182,76 @@ struct TrackTags {
   title: String,
   genres: Vec<String>,
   year: Option<i32>,
+  // The date tag as a display-ready string; `None` exactly when `year` is.
+  release_date: Option<String>,
 }
 
-// The release year out of a date tag value. Tag dates range from a bare
-// "1968" through "1968-05-03" to a full "1968-05-03T00:00:00", so take the
-// leading four-digit run and ignore whatever follows. Values that don't start
-// with a plausible year (blank, "0000", "Unknown") yield None so they can't
-// drag an artist's timeframe back to antiquity.
-fn parse_year(value: &str) -> Option<i32> {
-  let digits: String = value
-    .trim()
-    .chars()
-    .take_while(char::is_ascii_digit)
-    .collect();
+// A file's date tag reduced to the two things the app shows: the release year
+// (which drives an artist's release timeframe) and the date as text.
+struct ReleaseDate {
+  year: i32,
+  // "1968", "1968-05" or "1968-05-03" — as much of the date as the tag
+  // actually carried, with the separators normalized to ISO dashes.
+  text: String,
+}
+
+// Parse a date tag value. Tag dates range from a bare "1968" through
+// "1968-05-03" to a full "1968-05-03T00:00:00", and some taggers write
+// "1968/05/03", so read the leading four-digit year and then whatever
+// plausible month and day follow it. Values that don't start with a plausible
+// year (blank, "0000", "Unknown") yield None so they can't drag an artist's
+// timeframe back to antiquity; a year followed by anything unrecognized keeps
+// the year and drops the rest.
+fn parse_release_date(value: &str) -> Option<ReleaseDate> {
+  let value = value.trim();
+  let digits: String = value.chars().take_while(char::is_ascii_digit).collect();
   if digits.len() != 4 {
     return None;
   }
   let year = digits.parse::<i32>().ok()?;
   // Recorded music starts in the 1800s; anything outside that is a bad tag.
-  (1800..=2999).contains(&year).then_some(year)
+  if !(1800..=2999).contains(&year) {
+    return None;
+  }
+
+  // Month, then day: each a single-byte separator plus exactly two digits in
+  // the plausible range. The first part that doesn't fit ends the date, so a
+  // trailing time ("…T00:00:00") or note ("1968 (remaster)") is dropped
+  // rather than mangled.
+  let mut text = digits;
+  let mut rest = &value[4..];
+  for max in [12u32, 31] {
+    if !matches!(rest.chars().next(), Some('-' | '/' | '.')) {
+      break;
+    }
+    let part: String =
+      rest[1..].chars().take_while(char::is_ascii_digit).collect();
+    match part.parse::<u32>() {
+      Ok(n) if part.len() == 2 && (1..=max).contains(&n) => {
+        text.push('-');
+        text.push_str(&part);
+        rest = &rest[1 + part.len()..];
+      }
+      _ => break,
+    }
+  }
+  Some(ReleaseDate { year, text })
+}
+
+// Read the file's date tag, in key preference order: the recording date is
+// what most taggers write (ID3 TDRC, Vorbis DATE, MP4 ©day), with the release
+// dates as fallbacks for files that only carry those. Read as raw strings
+// rather than via `Accessor::date()`, which parses strictly and drops the
+// common bare-year and partial-date forms.
+fn read_release_date(tag: &lofty::tag::Tag) -> Option<ReleaseDate> {
+  [
+    lofty::tag::ItemKey::RecordingDate,
+    lofty::tag::ItemKey::Year,
+    lofty::tag::ItemKey::ReleaseDate,
+    lofty::tag::ItemKey::OriginalReleaseDate,
+  ]
+  .into_iter()
+  .find_map(|key| tag.get_string(key).and_then(parse_release_date))
 }
 
 // Read the credited artists, title, genres, and release year from the file's
@@ -219,12 +270,13 @@ fn read_track_tags(path: &Path) -> TrackTags {
         title: UNKNOWN_TITLE.to_string(),
         genres: Vec::new(),
         year: None,
+        release_date: None,
       }
     }
   };
 
   let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-  let (artists, title, genres, year) = match tag {
+  let (artists, title, genres, date) = match tag {
     Some(t) => {
       // `Accessor::artist()` yields only the first ARTIST value, silently
       // dropping the rest on files (notably Opus/Vorbis comments) that store
@@ -240,24 +292,11 @@ fn read_track_tags(path: &Path) -> TrackTags {
         .get_strings(lofty::tag::ItemKey::Genre)
         .flat_map(split_genres)
         .collect();
-      // Date keys in preference order: the recording date is what most
-      // taggers write (ID3 TDRC, Vorbis DATE, MP4 ©day), with the release
-      // dates as fallbacks for files that only carry those. Read as raw
-      // strings rather than via `Accessor::date()`, which parses strictly and
-      // drops the common bare-year and partial-date forms.
-      let year = [
-        lofty::tag::ItemKey::RecordingDate,
-        lofty::tag::ItemKey::Year,
-        lofty::tag::ItemKey::ReleaseDate,
-        lofty::tag::ItemKey::OriginalReleaseDate,
-      ]
-      .into_iter()
-      .find_map(|key| t.get_string(key).and_then(parse_year));
       (
         artists,
         t.title().map(|s| s.to_string()).unwrap_or_default(),
         genres,
-        year,
+        read_release_date(t),
       )
     }
     None => (Vec::new(), String::new(), Vec::new(), None),
@@ -282,7 +321,8 @@ fn read_track_tags(path: &Path) -> TrackTags {
     artists,
     title,
     genres,
-    year,
+    year: date.as_ref().map(|d| d.year),
+    release_date: date.map(|d| d.text),
   }
 }
 
@@ -609,6 +649,7 @@ fn run_scan(
       title: tags.title,
       genres: tags.genres,
       year: tags.year.map(i64::from),
+      release_date: tags.release_date,
       lyrics,
       date_added,
       has_cover,
@@ -1017,6 +1058,10 @@ struct SingleSong {
   file_name: String,
   file_path: String,
   date_added: String,
+  // The file's date tag ("1968", "1968-05" or "1968-05-03"), absent when it
+  // carries none that parses.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  release_date: Option<String>,
   // Technical audio properties. Absent (skipped) when unknown, so the frontend
   // can omit the corresponding row rather than render a blank or "0".
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -1193,39 +1238,61 @@ fn get_song(
         .unwrap_or_else(|_| track.path.clone())
         .to_string_lossy()
         .into_owned();
-      // Lyrics, DATE_ADDED, and technical properties come from the cache, not a
-      // fresh file read. Properties for rows that predate the cache columns are
-      // backfilled lazily here: read from disk once, persist, then serve.
+      // Lyrics, DATE_ADDED, the release date, and technical properties come
+      // from the cache, not a fresh file read. Values for rows that predate
+      // the cache columns are backfilled lazily here: read from disk once,
+      // persist, then serve.
       let path_str = track.path.to_string_lossy().to_string();
-      let (lyrics, date_added, props, file_size) = match config.pool.get() {
-        Ok(conn) => {
-          let (lyrics, date_added) = db::get_track_detail(&conn, &path_str)
-            .ok()
-            .flatten()
-            .map(|(l, d)| (l.unwrap_or_default(), d.unwrap_or_default()))
-            .unwrap_or_default();
-          let (props, size) = db::get_track_properties(&conn, &path_str)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-          // `format == None` means the row predates these columns; probe the
-          // file once and cache the result so later views stay cache-served.
-          let props = if props.format.is_none() {
-            let fresh = read_audio_properties(&track.path);
-            let _ = db::update_track_properties(&conn, &path_str, &fresh);
-            fresh
-          } else {
-            props
-          };
-          (lyrics, date_added, props, Some(size))
-        }
-        Err(_) => (
-          String::new(),
-          String::new(),
-          db::AudioProps::default(),
-          None,
-        ),
-      };
+      let (lyrics, date_added, release_date, props, file_size) =
+        match config.pool.get() {
+          Ok(conn) => {
+            let (lyrics, date_added, release_date) =
+              db::get_track_detail(&conn, &path_str)
+                .ok()
+                .flatten()
+                .map(|(l, d, r)| {
+                  (l.unwrap_or_default(), d.unwrap_or_default(), r)
+                })
+                .unwrap_or_default();
+            // The row's `year` comes from the very tag the release date does,
+            // so a set year with no date string means the row predates the
+            // column: re-read that one tag and cache it. Tracks without a year
+            // have no date to find, and are left alone.
+            let release_date = match (&release_date, track.year) {
+              (None, Some(_)) => {
+                let fresh = read_track_tags(&track.path).release_date;
+                let _ = db::update_track_release_date(
+                  &conn,
+                  &path_str,
+                  fresh.as_deref(),
+                );
+                fresh
+              }
+              _ => release_date,
+            };
+            let (props, size) = db::get_track_properties(&conn, &path_str)
+              .ok()
+              .flatten()
+              .unwrap_or_default();
+            // `format == None` means the row predates these columns; probe the
+            // file once and cache the result so later views stay cache-served.
+            let props = if props.format.is_none() {
+              let fresh = read_audio_properties(&track.path);
+              let _ = db::update_track_properties(&conn, &path_str, &fresh);
+              fresh
+            } else {
+              props
+            };
+            (lyrics, date_added, release_date, props, Some(size))
+          }
+          Err(_) => (
+            String::new(),
+            String::new(),
+            None,
+            db::AudioProps::default(),
+            None,
+          ),
+        };
 
       Json(SingleSongResponse {
         data: SingleSong {
@@ -1243,6 +1310,7 @@ fn get_song(
           file_name,
           file_path,
           date_added,
+          release_date,
           duration_secs: props.duration_secs,
           bitrate_kbps: props.bitrate_kbps,
           sample_rate_hz: props.sample_rate_hz,
@@ -1267,6 +1335,7 @@ fn get_song(
         file_name: String::new(),
         file_path: String::new(),
         date_added: String::new(),
+        release_date: None,
         duration_secs: None,
         bitrate_kbps: None,
         sample_rate_hz: None,
@@ -3012,16 +3081,31 @@ mod tests {
   }
 
   #[test]
-  fn parse_year_reads_the_common_date_tag_shapes() {
-    assert_eq!(parse_year("1968"), Some(1968));
-    assert_eq!(parse_year("1968-05-03"), Some(1968));
-    assert_eq!(parse_year("1968-05-03T00:00:00"), Some(1968));
-    assert_eq!(parse_year(" 2024 "), Some(2024));
-    // Neither a placeholder nor a partial year is a release year.
-    assert_eq!(parse_year(""), None);
-    assert_eq!(parse_year("0000"), None);
-    assert_eq!(parse_year("68"), None);
-    assert_eq!(parse_year("Unknown"), None);
+  fn parse_release_date_reads_the_common_date_tag_shapes() {
+    // (tag value, expected year, expected display text)
+    let parsed =
+      |v: &str| parse_release_date(v).map(|d| (d.year, d.text.clone()));
+    for (value, year, text) in [
+      ("1968", 1968, "1968"),
+      ("1968-05", 1968, "1968-05"),
+      ("1968-05-03", 1968, "1968-05-03"),
+      // A time component, a foreign separator and a trailing note all keep
+      // whatever prefix parses and drop the rest.
+      ("1968-05-03T00:00:00", 1968, "1968-05-03"),
+      ("1968/05/03", 1968, "1968-05-03"),
+      ("1968.05.03", 1968, "1968-05-03"),
+      ("1968-05-03 12:30", 1968, "1968-05-03"),
+      ("1968 (remaster)", 1968, "1968"),
+      ("1968-13-03", 1968, "1968"),
+      ("1968-5-3", 1968, "1968"),
+      (" 2024 ", 2024, "2024"),
+    ] {
+      assert_eq!(parsed(value), Some((year, text.to_string())), "{value}");
+    }
+    // Neither a placeholder nor a partial year is a release date.
+    for value in ["", "0000", "68", "Unknown"] {
+      assert_eq!(parsed(value), None, "{value}");
+    }
   }
 
   #[test]
