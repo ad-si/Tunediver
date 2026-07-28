@@ -2787,13 +2787,38 @@ fn index() -> Option<EmbeddedAsset> {
   embedded_asset("index.html")
 }
 
+// Join percent-decoded URL segments into an asset lookup path, or `None` if any
+// segment could reach outside the embedded bundle (`..`, dotfiles, a segment
+// that itself contains a separator). This mirrors the checks Rocket's `PathBuf`
+// guard performs, since the SPA fallback below can't use that guard.
+fn asset_path_from_segments(segments: &[&str]) -> Option<String> {
+  if segments.is_empty() {
+    return None;
+  }
+  let safe = segments.iter().all(|segment| {
+    !segment.is_empty()
+      && !segment.starts_with('.')
+      && !segment.starts_with('*')
+      && !segment.contains('/')
+      && !segment.contains('\\')
+  });
+  safe.then(|| segments.join("/"))
+}
+
 // Serve embedded static files (js, css, img, ...). Any path that doesn't map to
 // a real asset falls back to the SPA shell so client-side routing works.
+//
+// The segments are taken raw rather than as a `PathBuf` because Rocket rejects
+// any path whose decoded segments contain a `/` — which is exactly what a slug
+// like `AC%2FDC` decodes to, so `/artists/AC%2FDC/songs/...` would answer 422
+// instead of reaching the SPA.
 #[get("/<path..>", rank = 100)]
-fn static_files(path: PathBuf) -> Option<EmbeddedAsset> {
-  path
-    .to_str()
-    .and_then(embedded_asset)
+fn static_files(
+  path: rocket::http::uri::Segments<'_, rocket::http::uri::fmt::Path>,
+) -> Option<EmbeddedAsset> {
+  let segments: Vec<&str> = path.collect();
+  asset_path_from_segments(&segments)
+    .and_then(|path| embedded_asset(&path))
     .or_else(|| embedded_asset("index.html"))
 }
 
@@ -2986,6 +3011,36 @@ fn rocket() -> _ {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn asset_lookup_rejects_paths_that_escape_the_bundle() {
+    // Ordinary asset paths pass through untouched.
+    assert_eq!(
+      asset_path_from_segments(&["js", "tunediver.js"]).as_deref(),
+      Some("js/tunediver.js")
+    );
+
+    // Anything that could climb out of (or hide inside) the bundle is refused,
+    // so the caller serves the SPA shell instead of reading a stray file.
+    for segments in [
+      vec!["..", "..", "etc", "passwd"],
+      vec![".env"],
+      vec!["js", "..\\..", "passwd"],
+      vec!["js", ""],
+      vec![],
+    ] {
+      assert_eq!(
+        asset_path_from_segments(&segments),
+        None,
+        "must reject {:?}",
+        segments
+      );
+    }
+
+    // A slug that decodes to a slash (e.g. the artist "AC/DC") is not a valid
+    // asset path either — it routes to the SPA shell, not to a 422.
+    assert_eq!(asset_path_from_segments(&["artists", "AC/DC"]), None);
+  }
 
   #[test]
   fn collect_audio_files_skips_dotfiles_and_non_audio() {
