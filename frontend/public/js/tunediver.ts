@@ -2087,9 +2087,11 @@ const printObj = {
     }, $("c4"))
   },
 
-  // One artist's tracks in c3. `selectedSlug` marks one of them as the open
-  // song, for the same reason the list views take one: a song opened by URL or
-  // back/forward can't highlight a row this call hasn't built yet.
+  // One artist's tracks in c3, newest release first — the endpoint already
+  // returns them in that order, so prev/next steps through the same sequence
+  // the list shows. `selectedSlug` marks one of them as the open song, for the
+  // same reason the list views take one: a song opened by URL or back/forward
+  // can't highlight a row this call hasn't built yet.
   songs(artistSlug: string, selectedSlug?: string): void {
     ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
       // Clear the container first
@@ -2099,6 +2101,12 @@ const printObj = {
       $("c3").style.display = ""
       $("wrapper").classList.remove("songsActive")
       $("wrapper").classList.remove("playlistActive")
+      // Only reserve the right-hand gutter for the release-date column when at
+      // least one track carries a date; otherwise titles get the full width.
+      $("c3").classList.toggle(
+        "hasReleaseDates",
+        songs.some((song) => Boolean(song.release_date))
+      )
 
       // Render each song
       songs.forEach((song, index) => {
@@ -2114,16 +2122,22 @@ const printObj = {
         const link = shaven(["a", song.title]).rootElement
         const play = shaven(["button#.play"]).rootElement
         const add = shaven(["button#.add"]).rootElement
+        // The date tag as far as it is known — a full "1968-05-03" for files
+        // whose date the cache carries in full, just the year for the rest.
+        const released = shaven(
+          ["span#.releaseDate", song.release_date || ""]
+        ).rootElement
 
         // Create the song element with the data-id attribute
         const row = shaven(
-          ["div#.row", {
+          ["div#.row.songRow", {
             "data-song-id": songId,
             "data-artist-slug": artistSlug,
             "data-song-slug": song.slug,
           },
             [play],
-            [link]
+            [link],
+            [released]
           ]
         ).rootElement
         $("c3").appendChild(row)

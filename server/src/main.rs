@@ -55,6 +55,11 @@ struct Track {
   // `None` for untagged files — they simply don't contribute to an artist's
   // release timeframe rather than being counted as year 0.
   year: Option<i32>,
+  // The same date tag as the string it was stored as ("1968", "1968-05",
+  // "1968-05-03"). `None` on rows cached before the column existed — those
+  // still have their `year`, which the song list falls back to (see
+  // `track_to_song`); the detail view backfills the full string on first view.
+  release_date: Option<String>,
   path: PathBuf,
   // URL slug key that `find_track` resolves back to this track. Normally the
   // plain title; when several files share the same (artist, title) it carries
@@ -990,6 +995,12 @@ fn track_to_song(track: &Track) -> Song {
     track_artist: artist_credit(&track.artists),
     track_artists: track.artists.clone(),
     artist_slug: encode(primary),
+    // Both come from the same tag, so a row whose full string was never cached
+    // still yields the year rather than showing up as undated.
+    release_date: track
+      .release_date
+      .clone()
+      .or_else(|| track.year.map(|y| y.to_string())),
   }
 }
 
@@ -1037,6 +1048,12 @@ struct Song {
   track_artists: Vec<String>,
   // Slug of the primary (first-credited) artist — the track's canonical URL.
   artist_slug: String,
+  // The file's date tag as far as it is known: the full string ("1968-05-03")
+  // when cached, otherwise just the year it was reduced to ("1968"). Absent for
+  // files carrying no parseable date — the artist list renders no date for
+  // those and sorts them last.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  release_date: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1194,6 +1211,11 @@ fn get_genre_songs(
   Json(SongResponse { data: songs })
 }
 
+// One artist's songs, newest release first — the order the artist view lists
+// them in, and (since prev/next re-reads this endpoint) the order playback
+// steps through them. Dates are compared as the strings they were tagged as,
+// which orders correctly because they are zero-padded and share a prefix;
+// undated tracks sink to the bottom, ties break alphabetically by title.
 #[get("/artists/<artist>/songs")]
 fn get_artist_songs(
   artist: &str,
@@ -1204,11 +1226,20 @@ fn get_artist_songs(
     .unwrap_or_else(|_| artist.to_string());
 
   let catalog = config.catalog.read().unwrap();
-  let songs = catalog
+  let mut songs: Vec<Song> = catalog
     .tracks_by_artist(&decoded_artist)
     .into_iter()
     .map(track_to_song)
     .collect();
+  songs.sort_by(|a, b| {
+    match (&a.release_date, &b.release_date) {
+      (Some(x), Some(y)) => y.cmp(x),
+      (Some(_), None) => std::cmp::Ordering::Less,
+      (None, Some(_)) => std::cmp::Ordering::Greater,
+      (None, None) => std::cmp::Ordering::Equal,
+    }
+    .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+  });
 
   Json(SongResponse { data: songs })
 }
@@ -3129,6 +3160,7 @@ mod tests {
       title: title.to_string(),
       genres: Vec::new(),
       year: None,
+      release_date: None,
       path: PathBuf::from(path),
       slug: String::new(),
     };
@@ -3172,6 +3204,7 @@ mod tests {
       title: format!("Song {}", id),
       genres: Vec::new(),
       year: None,
+      release_date: None,
       path: PathBuf::from(format!("/{}.mp3", id)),
       slug: format!("Song {}", id),
     };
@@ -3212,6 +3245,7 @@ mod tests {
       title: format!("Song {}", id),
       genres: genres.iter().map(|g| g.to_string()).collect(),
       year: None,
+      release_date: None,
       path: PathBuf::from(format!("/{}.mp3", id)),
       slug: format!("Song {}", id),
     };

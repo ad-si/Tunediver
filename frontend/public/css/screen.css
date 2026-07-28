@@ -789,6 +789,33 @@ input[type="search"] {
   pointer-events: none;
 }
 
+/* Per-track release date on the right of an artist's song row. Scoped to
+   .songRow so a stale container class can't reserve the gutter in the playlist
+   or genre lists that share #c3; the padding applies only when the artist
+   actually has dated tracks (see .hasReleaseDates, toggled in printObj.songs).
+   No hover button sits on that edge here, so it reaches closer to the border
+   than the playlist's "Added At" column. */
+.hasReleaseDates .songRow a {
+  padding-right: 78px;
+}
+
+/* Fixed-width and left-aligned rather than shrink-wrapped to the right edge,
+   so a bare "1999" starts where "1999-03-04" starts and the years line up in a
+   column. 10ch spans the widest form (8 tabular digits plus two narrower
+   hyphens) with room to spare. */
+.row .releaseDate {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  width: 10ch;
+  height: 100%;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
 /* Manual Order track numbers. Sit inside the same 20px-wide gutter as the
    hover play button, hidden whenever a gutter indicator (play on hover, the
    speaker on the playing row) takes over so nothing overlaps. */

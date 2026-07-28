@@ -412,7 +412,8 @@ pub fn set_meta(conn: &Conn, key: &str, value: &str) -> rusqlite::Result<()> {
 // `build_catalog` behavior.
 pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
   let mut stmt = conn.prepare(
-    "SELECT artists, title, genres, year, path FROM tracks ORDER BY path",
+    "SELECT artists, title, genres, year, release_date, path
+     FROM tracks ORDER BY path",
   )?;
   let rows = stmt.query_map([], |r| {
     Ok((
@@ -420,12 +421,13 @@ pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
       r.get::<_, String>(1)?,
       r.get::<_, Option<String>>(2)?,
       r.get::<_, Option<i64>>(3)?,
-      r.get::<_, String>(4)?,
+      r.get::<_, Option<String>>(4)?,
+      r.get::<_, String>(5)?,
     ))
   })?;
   let mut tracks = Vec::new();
   for (id, row) in rows.enumerate() {
-    let (artists_raw, title, genres_raw, year, path) = row?;
+    let (artists_raw, title, genres_raw, year, release_date, path) = row?;
     // Fresh rows hold a JSON array; rows migrated from the old single-string
     // `artist` column are parsed with the same separator logic used at read
     // time. Either way, never leave the list empty.
@@ -447,6 +449,10 @@ pub fn load_catalog(conn: &Conn) -> rusqlite::Result<crate::Catalog> {
       // Same story as genres: NULL on rows that predate the column, healed by
       // the tags_v bump on the next scan.
       year: year.map(|y| y as i32),
+      // NULL on rows cached before this column was backfilled — unlike
+      // `year`/`genres` no tags_v bump heals those, so the song list falls
+      // back to the year (see `track_to_song`).
+      release_date,
       path: PathBuf::from(path),
       // Filled in by `assign_track_slugs` below, once all tracks are loaded
       // and (artist, title) collisions can be detected.
