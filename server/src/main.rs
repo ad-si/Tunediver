@@ -1301,129 +1301,156 @@ fn get_song(
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| artist.to_string());
 
-  let catalog = config.catalog.read().unwrap();
-  match catalog.find_track(&decoded_artist, song) {
-    Some(track) => {
-      let file_name = track
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-      let file_path = track
-        .path
-        .canonicalize()
-        .unwrap_or_else(|_| track.path.clone())
-        .to_string_lossy()
-        .into_owned();
-      // Lyrics, DATE_ADDED, the release date, and technical properties come
-      // from the cache, not a fresh file read. Values for rows that predate
-      // the cache columns are backfilled lazily here: read from disk once,
-      // persist, then serve.
-      let path_str = track.path.to_string_lossy().to_string();
-      let (lyrics, date_added, release_date, props, file_size) =
-        match config.pool.get() {
-          Ok(conn) => {
-            let (lyrics, date_added, release_date) =
-              db::get_track_detail(&conn, &path_str)
+  // Set when the lookup below backfills a release date, and applied to the
+  // in-memory catalog once the read guard is released.
+  let mut backfilled: Option<(String, String)> = None;
+
+  let response = {
+    let catalog = config.catalog.read().unwrap();
+    match catalog.find_track(&decoded_artist, song) {
+      Some(track) => {
+        let file_name = track
+          .path
+          .file_name()
+          .and_then(|n| n.to_str())
+          .unwrap_or("")
+          .to_string();
+        let file_path = track
+          .path
+          .canonicalize()
+          .unwrap_or_else(|_| track.path.clone())
+          .to_string_lossy()
+          .into_owned();
+        // Lyrics, DATE_ADDED, the release date, and technical properties come
+        // from the cache, not a fresh file read. Values for rows that predate
+        // the cache columns are backfilled lazily here: read from disk once,
+        // persist, then serve.
+        let path_str = track.path.to_string_lossy().to_string();
+        let (lyrics, date_added, release_date, props, file_size) =
+          match config.pool.get() {
+            Ok(conn) => {
+              let (lyrics, date_added, release_date) =
+                db::get_track_detail(&conn, &path_str)
+                  .ok()
+                  .flatten()
+                  .map(|(l, d, r)| {
+                    (l.unwrap_or_default(), d.unwrap_or_default(), r)
+                  })
+                  .unwrap_or_default();
+              // The row's `year` comes from the very tag the release date does,
+              // so a set year with no date string means the row predates the
+              // column: re-read that one tag and cache it. Tracks without a year
+              // have no date to find, and are left alone.
+              let release_date = match (&release_date, track.year) {
+                (None, Some(_)) => {
+                  let fresh = read_track_tags(&track.path).release_date;
+                  let _ = db::update_track_release_date(
+                    &conn,
+                    &path_str,
+                    fresh.as_deref(),
+                  );
+                  if let Some(date) = &fresh {
+                    backfilled = Some((path_str.clone(), date.clone()));
+                  }
+                  fresh
+                }
+                _ => release_date,
+              };
+              let (props, size) = db::get_track_properties(&conn, &path_str)
                 .ok()
                 .flatten()
-                .map(|(l, d, r)| {
-                  (l.unwrap_or_default(), d.unwrap_or_default(), r)
-                })
                 .unwrap_or_default();
-            // The row's `year` comes from the very tag the release date does,
-            // so a set year with no date string means the row predates the
-            // column: re-read that one tag and cache it. Tracks without a year
-            // have no date to find, and are left alone.
-            let release_date = match (&release_date, track.year) {
-              (None, Some(_)) => {
-                let fresh = read_track_tags(&track.path).release_date;
-                let _ = db::update_track_release_date(
-                  &conn,
-                  &path_str,
-                  fresh.as_deref(),
-                );
+              // `format == None` means the row predates these columns; probe the
+              // file once and cache the result so later views stay cache-served.
+              let props = if props.format.is_none() {
+                let fresh = read_audio_properties(&track.path);
+                let _ = db::update_track_properties(&conn, &path_str, &fresh);
                 fresh
-              }
-              _ => release_date,
-            };
-            let (props, size) = db::get_track_properties(&conn, &path_str)
-              .ok()
-              .flatten()
-              .unwrap_or_default();
-            // `format == None` means the row predates these columns; probe the
-            // file once and cache the result so later views stay cache-served.
-            let props = if props.format.is_none() {
-              let fresh = read_audio_properties(&track.path);
-              let _ = db::update_track_properties(&conn, &path_str, &fresh);
-              fresh
-            } else {
-              props
-            };
-            (lyrics, date_added, release_date, props, Some(size))
-          }
-          Err(_) => (
-            String::new(),
-            String::new(),
-            None,
-            db::AudioProps::default(),
-            None,
-          ),
-        };
+              } else {
+                props
+              };
+              (lyrics, date_added, release_date, props, Some(size))
+            }
+            Err(_) => (
+              String::new(),
+              String::new(),
+              None,
+              db::AudioProps::default(),
+              None,
+            ),
+          };
 
-      Json(SingleSongResponse {
+        Json(SingleSongResponse {
+          data: SingleSong {
+            id: track.id,
+            title: track.title.clone(),
+            slug: encode(&track.slug),
+            track_artist: artist_credit(&track.artists),
+            track_artists: track.artists.clone(),
+            lyrics,
+            src: format!(
+              "/api/{}/{}",
+              encode(primary_artist(&track.artists)),
+              encode(&track.slug)
+            ),
+            file_name,
+            file_path,
+            date_added,
+            release_date,
+            duration_secs: props.duration_secs,
+            bitrate_kbps: props.bitrate_kbps,
+            sample_rate_hz: props.sample_rate_hz,
+            bit_depth: props.bit_depth,
+            channels: props.channels,
+            format: props.format,
+            // A cached size of 0 is a not-yet-stamped placeholder, not a real
+            // empty file; suppress it so the UI omits the row.
+            file_size: file_size.filter(|&s| s > 0),
+          },
+        })
+      }
+      None => Json(SingleSongResponse {
         data: SingleSong {
-          id: track.id,
-          title: track.title.clone(),
-          slug: encode(&track.slug),
-          track_artist: artist_credit(&track.artists),
-          track_artists: track.artists.clone(),
-          lyrics,
-          src: format!(
-            "/api/{}/{}",
-            encode(primary_artist(&track.artists)),
-            encode(&track.slug)
-          ),
-          file_name,
-          file_path,
-          date_added,
-          release_date,
-          duration_secs: props.duration_secs,
-          bitrate_kbps: props.bitrate_kbps,
-          sample_rate_hz: props.sample_rate_hz,
-          bit_depth: props.bit_depth,
-          channels: props.channels,
-          format: props.format,
-          // A cached size of 0 is a not-yet-stamped placeholder, not a real
-          // empty file; suppress it so the UI omits the row.
-          file_size: file_size.filter(|&s| s > 0),
+          id: 0,
+          title: song.to_string(),
+          slug: song.to_string(),
+          track_artists: vec![decoded_artist.clone()],
+          track_artist: decoded_artist,
+          lyrics: String::new(),
+          src: String::new(),
+          file_name: String::new(),
+          file_path: String::new(),
+          date_added: String::new(),
+          release_date: None,
+          duration_secs: None,
+          bitrate_kbps: None,
+          sample_rate_hz: None,
+          bit_depth: None,
+          channels: None,
+          format: None,
+          file_size: None,
         },
-      })
+      }),
     }
-    None => Json(SingleSongResponse {
-      data: SingleSong {
-        id: 0,
-        title: song.to_string(),
-        slug: song.to_string(),
-        track_artists: vec![decoded_artist.clone()],
-        track_artist: decoded_artist,
-        lyrics: String::new(),
-        src: String::new(),
-        file_name: String::new(),
-        file_path: String::new(),
-        date_added: String::new(),
-        release_date: None,
-        duration_secs: None,
-        bitrate_kbps: None,
-        sample_rate_hz: None,
-        bit_depth: None,
-        channels: None,
-        format: None,
-        file_size: None,
-      },
-    }),
+  };
+
+  // Mirror the backfill into the catalog the list endpoints are served from.
+  // It is only rebuilt by a scan, so without this the song list would keep
+  // showing the bare year for the rest of the process's life while this view
+  // shows the full date — the two reading the same track differently.
+  if let Some((path, date)) = backfilled {
+    if let Ok(mut catalog) = config.catalog.write() {
+      if let Some(track) = catalog
+        .tracks
+        .iter_mut()
+        .find(|t| t.path.to_string_lossy() == path)
+      {
+        track.release_date = Some(date);
+      }
+    }
   }
+
+  response
 }
 
 // Serve the embedded cover art from an audio file's tags. Returns the raw
