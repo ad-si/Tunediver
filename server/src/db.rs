@@ -482,6 +482,23 @@ pub fn get_track_detail(
     .optional()
 }
 
+// Paths of cached tracks whose release date is missing although the row has a
+// year — the two come from the same tag, so that combination means the row was
+// written before the column existed. The scan re-reads exactly these files to
+// backfill the full date (see `backfill_release_dates`); rows with no year have
+// no date to find and are left alone.
+pub fn paths_missing_release_date(
+  conn: &Conn,
+) -> rusqlite::Result<Vec<String>> {
+  let mut stmt = conn.prepare(
+    "SELECT path FROM tracks
+     WHERE release_date IS NULL AND year IS NOT NULL
+     ORDER BY path",
+  )?;
+  let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+  rows.collect()
+}
+
 // Lazily backfill the release-date column for an already-cached track, leaving
 // every other column (tags, cover, stamps) untouched. Used when the detail
 // endpoint reads a row written before the column existed; adding it via a
@@ -938,6 +955,35 @@ mod tests {
       ))
     );
     assert_eq!(load_catalog(&conn).unwrap().tracks[0].year, Some(1968));
+  }
+
+  #[test]
+  fn missing_release_dates_lists_only_dated_rows_without_a_date_string() {
+    let pool = temp_pool("missing_release_dates");
+    let conn = pool.get().unwrap();
+
+    // Pre-column row: a year, no date string — needs the backfill.
+    let mut stale = sample_track("/m/stale.mp3");
+    stale.year = Some(1968);
+    upsert_track(&conn, &stale).unwrap();
+    // Already backfilled — nothing to do.
+    let mut fresh = sample_track("/m/fresh.mp3");
+    fresh.year = Some(1975);
+    fresh.release_date = Some("1975-02-11".to_string());
+    upsert_track(&conn, &fresh).unwrap();
+    // Untagged: no year means there is no date on disk to find, so re-reading
+    // it every scan would be pure waste.
+    upsert_track(&conn, &sample_track("/m/undated.mp3")).unwrap();
+
+    assert_eq!(
+      paths_missing_release_date(&conn).unwrap(),
+      vec!["/m/stale.mp3".to_string()]
+    );
+
+    // Once backfilled the pass finds nothing, so it does not repeat.
+    update_track_release_date(&conn, "/m/stale.mp3", Some("1968-05-03"))
+      .unwrap();
+    assert!(paths_missing_release_date(&conn).unwrap().is_empty());
   }
 
   #[test]

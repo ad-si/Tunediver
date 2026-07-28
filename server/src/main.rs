@@ -703,17 +703,64 @@ fn run_scan(
     );
   }
 
+  let backfilled = backfill_release_dates(&conn, scan_processed, scan_total);
+
   match db::load_catalog(&conn) {
     Ok(new_catalog) => {
       let count = new_catalog.tracks.len();
       *catalog.write().unwrap() = new_catalog;
       println!(
-        "Scan complete: {} track(s) ({} new/updated)",
-        count, changed
+        "Scan complete: {} track(s) ({} new/updated, {} date(s) backfilled)",
+        count, changed, backfilled
       );
     }
     Err(e) => eprintln!("Scan: failed to rebuild catalog: {}", e),
   }
+}
+
+// Fill in the full release date for rows cached before the column existed, so
+// every view shows the day-precise date the tag carries rather than the bare
+// year the row was reduced to. These rows are unchanged on disk, so the
+// mtime/size loop above skips them and no `tags_v` bump reaches them — that bump
+// would re-read every file's lyrics and cover art too, minutes of work on slow
+// removable media for a single missing column. Reading just the tag of just the
+// affected files is the cheap targeted alternative, and it is self-limiting: the
+// date is `None` exactly when the year is, so a successful pass leaves nothing
+// for the next scan to redo. Returns how many rows were updated.
+fn backfill_release_dates(
+  conn: &db::Conn,
+  scan_processed: &AtomicUsize,
+  scan_total: &AtomicUsize,
+) -> usize {
+  let paths = match db::paths_missing_release_date(conn) {
+    Ok(p) => p,
+    Err(e) => {
+      eprintln!("Scan: could not list rows missing a release date: {}", e);
+      return 0;
+    }
+  };
+  if paths.is_empty() {
+    return 0;
+  }
+  // Count these files in the progress totals; they are as much of the scan's
+  // work as the walk is, and on a first backfill there can be thousands.
+  scan_total.fetch_add(paths.len(), Ordering::SeqCst);
+
+  let mut updated = 0usize;
+  for path_str in &paths {
+    scan_processed.fetch_add(1, Ordering::SeqCst);
+    let date = read_track_tags(Path::new(path_str)).release_date;
+    // A file that has become unreadable yields `None`; writing it back would be
+    // a no-op, so skip it and let a later scan retry.
+    if date.is_none() {
+      continue;
+    }
+    match db::update_track_release_date(conn, path_str, date.as_deref()) {
+      Ok(()) => updated += 1,
+      Err(e) => eprintln!("Scan: failed to cache date for {}: {}", path_str, e),
+    }
+  }
+  updated
 }
 
 impl Catalog {
