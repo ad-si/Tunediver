@@ -2328,7 +2328,7 @@ fn get_artist_info(
       count,
     })
     .collect();
-  genres.sort_by(|a, b| b.count.cmp(&a.count));
+  genres.sort_by_key(|g| std::cmp::Reverse(g.count));
 
   Json(ArtistInfoResponse {
     data: ArtistInfo {
