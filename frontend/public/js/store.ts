@@ -53,8 +53,9 @@ interface AppState {
   // the audio "play"/"pause"/"ended" events (see attachAudioListeners); the
   // #play button, media-session state, and row markers subscribe to it.
   playState: PlayState
-  // When true, prev/next and auto-advance pick a random track from the active
-  // context instead of the sequential neighbour.
+  // When true, next and auto-advance pick a random track from the active
+  // context instead of the sequential neighbour. Prev still steps back through
+  // the tracks actually played (see playedBack in tunediver.ts).
   shuffleEnabled: boolean
   // "off" stops at the end of the list; "all" wraps; "one" replays the track.
   repeatMode: RepeatMode

@@ -36,6 +36,22 @@ const playlist: Song[] = []
 const recentlyPlayed: string[] = []
 const RECENT_LIMIT = 10
 
+// Back/forward stacks of the tracks actually played, newest last. In shuffle
+// mode there is no list position to step back to, so "previous" replays what
+// was really heard: every track that gets superseded is pushed onto `playedBack`
+// (with its playback context, so it can be resumed in the playlist/search/genre
+// it came from), and pressing previous pops it while pushing the track we left
+// onto `playedForward` — so "next" returns to it instead of rolling a fresh
+// random track. Any normal (non-history) play invalidates the forward stack.
+const playedBack: PlayingRef[] = []
+const playedForward: PlayingRef[] = []
+const PLAYED_HISTORY_LIMIT = 100
+
+// True while a recorded track is being replayed by the back/forward buttons,
+// so playSong knows not to record that replay as a new step (which would make
+// previous/next ping-pong between the same two songs).
+let navigatingPlayHistory = false
+
 // Mark the given c1 tab button as active and clear the active state
 // from the others. Pass null to clear all. Drives the colored highlight
 // on whichever tab's view is currently rendered.
@@ -579,6 +595,15 @@ function playSong(
     // Now replace the global audio instance
     audio = newAudio
 
+    // Record the track being superseded, so shuffle's previous button can walk
+    // back through what was actually played. Only real playback counts (the
+    // landing-page preload passes autoplay = false), and replays driven by the
+    // history buttons themselves are skipped — see navigatingPlayHistory.
+    if (autoplay && !navigatingPlayHistory && store.currentlyPlaying) {
+      pushPlayed(playedBack, store.currentlyPlaying)
+      playedForward.length = 0
+    }
+
     // Remember which track is loaded so row markers can find it. Setting this
     // triggers the store effect that (re)applies the .playing markers; they
     // only show once playback actually starts (store.playState === "playing").
@@ -665,10 +690,23 @@ function playSong(
 function playAdjacentSong(direction: 1 | -1): void {
   if (!store.currentlyPlaying) return
 
-  // In shuffle mode the direction is irrelevant: prev, next, and
-  // auto-advance all jump to a random track in the active context.
+  // In shuffle mode there is no meaningful list neighbour, but the direction
+  // still matters: previous walks back through the tracks actually played,
+  // next re-plays whatever we stepped back from, and only once the forward
+  // history is exhausted does it roll a fresh random track.
   if (store.shuffleEnabled) {
-    playRandomInContext()
+    const target = (direction === -1 ? playedBack : playedForward).pop()
+    if (!target) {
+      // Nothing recorded in that direction: stepping back off the start of the
+      // session does nothing, stepping forward continues shuffling.
+      if (direction === 1) playRandomInContext()
+      return
+    }
+    if (store.currentlyPlaying) {
+      pushPlayed(direction === -1 ? playedForward : playedBack,
+        store.currentlyPlaying)
+    }
+    playRecordedSong(target)
     return
   }
 
@@ -855,9 +893,116 @@ function randomFreshIndex(keys: string[], currentKey: string): number {
   return pool[Math.floor(Math.random() * pool.length)]
 }
 
+// Push a played track onto one of the history stacks, copying it so later
+// context patches (playPlaylistTrack & co. write onto store.currentlyPlaying)
+// can't rewrite history. The oldest entry is dropped past the limit.
+function pushPlayed(stack: PlayingRef[], ref: PlayingRef): void {
+  stack.push({ ...ref })
+  while (stack.length > PLAYED_HISTORY_LIMIT) stack.shift()
+}
+
+// Run a play call flagged as history navigation, so playSong doesn't record it
+// as a new step. Wraps only the play call itself, not the surrounding fetch,
+// because the flag has to be down again by the time anything else plays.
+function withHistoryNav<T>(fn: () => T): T {
+  navigatingPlayHistory = true
+  try {
+    return fn()
+  } finally {
+    navigatingPlayHistory = false
+  }
+}
+
+// Re-play a track recorded in the back/forward history, restoring the context
+// it was originally played in (playlist, search queue, or genre) and mirroring
+// the per-context highlight/URL bookkeeping of playAdjacentSong. Silently does
+// nothing if the track is no longer reachable — e.g. removed from the playlist
+// or dropped from the catalog by a rescan.
+function playRecordedSong(ref: PlayingRef): void {
+  const {
+    artistSlug, songSlug, playlistId, playlistIndex, searchIndex, genreSlug,
+  } = ref
+
+  if (searchIndex !== undefined && store.searchQueue) {
+    const target = withHistoryNav(() => playSearchSong(searchIndex))
+    if (!target) return
+    const row = $("c2").querySelector(
+      `.row[data-search-index="${searchIndex}"]`
+    ) as HTMLElement | null
+    if (row) {
+      highlight(row)
+      row.scrollIntoView({ block: "nearest" })
+    }
+    const url = songPath(target.artist_slug || "", target.slug)
+    history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    return
+  }
+
+  if (playlistId !== undefined && playlistIndex !== undefined) {
+    ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
+      const target = playlist.tracks[playlistIndex]
+      if (!target || !target.available) return
+      withHistoryNav(() =>
+        playPlaylistTrack(playlist.id, playlistIndex, target)
+      )
+
+      if (store.currentPlaylistId === playlist.id) {
+        const row = $("c3").querySelector(
+          `.row[data-playlist-index="${playlistIndex}"]`
+        ) as HTMLElement | null
+        if (row) {
+          highlight(row)
+          row.scrollIntoView({ block: "nearest" })
+        }
+      }
+      printObj.song(target.slug, target.artist_slug)
+      const url = `playlists/${playlist.id}/${playlistIndex}`
+      history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    })
+    return
+  }
+
+  if (genreSlug !== undefined) {
+    ajax<Song[]>(`/genres/${genreSlug}/songs`, (songs) => {
+      const target = songs.find((s) =>
+        s.slug === songSlug && (s.artist_slug || "") === artistSlug
+      )
+      if (!target) return
+      withHistoryNav(() => playGenreSong(genreSlug, target))
+      highlightGenreRow(target)
+      printObj.song(target.slug, target.artist_slug || "")
+      const url = songPath(target.artist_slug || "", target.slug)
+      history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+    })
+    return
+  }
+
+  // No stored context: the track came from the Artists or Songs tab, so it can
+  // be re-fetched from its artist either way. Only the Songs tab gets the row
+  // highlight, detail view and URL update, matching playAdjacentSong.
+  ajax<Song[]>(`/artists/${artistSlug}/songs`, (songs) => {
+    const target = songs.find((s) => s.slug === songSlug)
+    if (!target) return
+    withHistoryNav(() => playSong(target, artistSlug, false))
+    if (store.currentTab !== "songs") return
+
+    const row = $("c2").querySelector(
+      `.row[data-artist-slug="${CSS.escape(artistSlug)}"]`
+      + `[data-song-slug="${CSS.escape(target.slug)}"]`
+    ) as HTMLElement | null
+    if (row) {
+      highlight(row)
+      row.scrollIntoView({ block: "nearest" })
+    }
+    printObj.song(target.slug, artistSlug)
+    const url = songPath(artistSlug, target.slug)
+    history.pushState({ "url": url }, target.slug, baseURL + "/" + url)
+  })
+}
+
 // Play a random track from whatever context is currently driving playback,
 // mirroring the per-context highlight/URL bookkeeping of playAdjacentSong.
-// Used by prev/next and auto-advance while shuffle is enabled.
+// Used by next and auto-advance while shuffle is enabled.
 function playRandomInContext(): void {
   if (!store.currentlyPlaying) return
   const {
