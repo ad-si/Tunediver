@@ -22,7 +22,9 @@ pub type CachedCover = (bool, Option<Vec<u8>>, Option<String>);
 
 // Waveform peaks as cached for a track. `Unavailable` is a cached negative
 // result — the file was decoded once and yielded nothing (an unsupported codec,
-// say) — so an undecodable track isn't re-decoded on every play.
+// say) — so an undecodable track isn't re-decoded on every play. It lasts only
+// until the next start, though: which codecs are decodable is a property of the
+// installed decoders, not of the file (see the purge in `init_schema`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum CachedWaveform {
   Peaks(Vec<u8>),
@@ -259,6 +261,16 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
     // VACUUM must run outside any transaction, hence its own batch.
     conn.execute_batch("VACUUM")?;
   }
+  // Drop the negative half of the waveform cache on every start. A NULL `peaks`
+  // row means "this file could not be decoded", but that verdict depends on the
+  // decoders available at the time, not on the file: a track whose codec needs
+  // the ffmpeg fallback (Opus, WMA) records as undecodable when ffmpeg is
+  // missing — or merely unreachable, as under launchd's bare PATH — and would
+  // otherwise keep reading as undecodable forever once the tool is there.
+  // Re-deciding costs one decode attempt per genuinely-undecodable file per
+  // start, and only when something actually asks for its waveform; the
+  // successful rows, which are the expensive ones, are left alone.
+  conn.execute("DELETE FROM track_waveforms WHERE peaks IS NULL", [])?;
   conn.execute(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
      ON CONFLICT(key) DO NOTHING",
@@ -1010,6 +1022,30 @@ mod tests {
     assert!(blob.is_none());
     // Not-yet-scanned track → None (distinct from a known-no-cover track).
     assert_eq!(get_cover(&conn, "/m/missing.mp3").unwrap(), None);
+  }
+
+  #[test]
+  fn init_schema_keeps_waveforms_but_drops_undecodable_marks() {
+    let pool = temp_pool("waveform_negative_cache");
+    let conn = pool.get().unwrap();
+    upsert_track(&conn, &sample_track("/m/decoded.mp3")).unwrap();
+    upsert_track(&conn, &sample_track("/m/undecodable.opus")).unwrap();
+    set_waveform(&conn, "/m/decoded.mp3", 100, 200, 400, 2, Some(&[1, 2, 3]))
+      .unwrap();
+    set_waveform(&conn, "/m/undecodable.opus", 100, 200, 400, 2, None).unwrap();
+
+    // A restart re-decides which files are undecodable, since that verdict
+    // depends on the decoders installed rather than on the file itself.
+    init_schema(&conn).unwrap();
+
+    assert!(matches!(
+      get_waveform(&conn, "/m/decoded.mp3", 100, 200, 400, 2).unwrap(),
+      Some(CachedWaveform::Peaks(ref peaks)) if peaks == &[1, 2, 3]
+    ));
+    assert_eq!(
+      get_waveform(&conn, "/m/undecodable.opus", 100, 200, 400, 2).unwrap(),
+      None
+    );
   }
 
   #[test]

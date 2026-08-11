@@ -16,6 +16,7 @@
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use symphonia::core::audio::{SampleBuffer, SignalSpec};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -55,6 +56,19 @@ const NORMALIZE_PERCENTILE: f32 = 0.98;
 // BUCKETS slices anyway, so decoding at CD rate would only cost time; this
 // still leaves ~40 raw measurements per second of audio.
 const FFMPEG_SAMPLE_RATE: &str = "22050";
+
+// Where to look for ffmpeg when a bare `ffmpeg` doesn't resolve. Running under
+// launchd (which is how the server runs day to day) means inheriting launchd's
+// own PATH — `/usr/bin:/bin:/usr/sbin:/sbin` — not the shell's, so a Homebrew
+// or MacPorts ffmpeg is invisible even though it is plainly installed. Falling
+// back to the well-known install prefixes keeps Opus and WMA tracks from
+// silently losing their waveform depending on how the server was started.
+const FFMPEG_FALLBACK_PATHS: &[&str] = &[
+  "/opt/homebrew/bin/ffmpeg", // Homebrew, Apple silicon
+  "/usr/local/bin/ffmpeg",    // Homebrew, Intel — and the usual Linux prefix
+  "/opt/local/bin/ffmpeg",    // MacPorts
+  "/usr/bin/ffmpeg",          // distro package
+];
 
 // Waveform values for `path`, or None if it has no audio that can be decoded
 // at all. The in-process decoder covers everything the collection is made of
@@ -196,13 +210,47 @@ fn raw_levels_via_symphonia(path: &Path) -> Option<Vec<f32>> {
   levels.finish()
 }
 
+// The ffmpeg binary to decode with, or None when the machine has none.
+// Resolved once per process: `TUNEDIVER_FFMPEG` wins if set, then whatever
+// PATH offers, then the fallback prefixes above. Each candidate is probed by
+// actually running it, so a path that exists but can't execute is passed over
+// rather than picked and then failing on every track.
+pub fn ffmpeg_binary() -> Option<&'static str> {
+  static RESOLVED: OnceLock<Option<String>> = OnceLock::new();
+  RESOLVED
+    .get_or_init(|| {
+      let configured = std::env::var("TUNEDIVER_FFMPEG").ok();
+      configured
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("ffmpeg"))
+        .chain(FFMPEG_FALLBACK_PATHS.iter().copied())
+        .find(|candidate| ffmpeg_runs(candidate))
+        .map(str::to_string)
+    })
+    .as_deref()
+}
+
+// Whether `candidate` is an ffmpeg that can actually be executed. `-version`
+// exits immediately and touches no input, so this costs one short-lived
+// process per candidate tried, once for the life of the server.
+fn ffmpeg_runs(candidate: &str) -> bool {
+  Command::new(candidate)
+    .arg("-version")
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .status()
+    .is_ok_and(|status| status.success())
+}
+
 // The same levels by way of ffmpeg, for formats symphonia has no decoder for
-// (Opus, WMA). Entirely optional: on a machine without ffmpeg the spawn fails
-// and those tracks simply get no waveform. ffmpeg does the downmix and
+// (Opus, WMA). Entirely optional: on a machine without ffmpeg there is nothing
+// to spawn and those tracks simply get no waveform. ffmpeg does the downmix and
 // resample itself, so what arrives on its stdout is a bare stream of mono
 // little-endian f32 samples with no header to skip.
 fn raw_levels_via_ffmpeg(path: &Path) -> Option<Vec<f32>> {
-  let mut child = Command::new("ffmpeg")
+  let mut child = Command::new(ffmpeg_binary()?)
     .args(["-v", "quiet"])
     .arg("-i")
     .arg(path)
@@ -374,6 +422,18 @@ mod tests {
   #[test]
   fn bucketize_returns_silence_for_a_silent_track() {
     assert_eq!(bucketize(&[0.0, 0.0]), vec![0; BUCKETS]);
+  }
+
+  #[test]
+  fn ffmpeg_runs_rejects_a_path_with_nothing_at_it() {
+    assert!(!ffmpeg_runs("/nonexistent/prefix/bin/ffmpeg"));
+  }
+
+  #[test]
+  fn ffmpeg_runs_rejects_a_binary_that_is_not_ffmpeg() {
+    // `false` executes fine and exits non-zero, which is what a candidate that
+    // exists but can't serve as a decoder looks like.
+    assert!(!ffmpeg_runs("/usr/bin/false"));
   }
 
   #[test]

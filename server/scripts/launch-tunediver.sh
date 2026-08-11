@@ -32,6 +32,13 @@ while [ "$elapsed" -lt "$WAIT_SECONDS" ]; do
   elapsed=$((elapsed + 5))
 done
 
+# launchd hands its jobs a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin), which
+# omits every prefix a package manager installs into. The waveform extractor
+# shells out to ffmpeg for the codecs it can't decode in-process (Opus, WMA),
+# so put the usual prefixes back before exec'ing.
+PATH="/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:$PATH"
+export PATH
+
 export ROCKET_MUSIC_PATH="$MUSIC_DIR"
 export ROCKET_ADDRESS
 export ROCKET_PORT
