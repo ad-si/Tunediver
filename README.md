@@ -150,3 +150,10 @@ and compiled to JavaScript with `make build`.
 - [Navidrome] - Music server
 
 [Navidrome]: https://github.com/navidrome/navidrome/
+
+
+### Library Tools
+
+- [Antra] - Turns streaming service links into a tagged local library.
+
+[Antra]: https://github.com/anandprtp/Antra
