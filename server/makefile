@@ -64,7 +64,10 @@ test: build
 		ROCKET_DB_PATH=$(TEST_DB) \
 		./target/debug/tunediver-api > /dev/null 2>&1 & \
 	SERVER_PID=$$!; \
-	trap "kill $$SERVER_PID 2>/dev/null" EXIT INT TERM; \
+	# `|| true`: under the `set -e` below, a failing kill in the EXIT trap \
+	# (server already gone) would turn a passing run into exit status 1. A \
+	# server that dies mid-test still fails the next http request. \
+	trap "kill $$SERVER_PID 2>/dev/null || true" EXIT INT TERM; \
 	for i in 1 2 3 4 5 6 7 8 9 10; do \
 		curl -sf http://127.0.0.1:$(TEST_PORT)/api/artists > /dev/null 2>&1 && break; \
 		sleep 0.5; \
