@@ -280,7 +280,7 @@ fn raw_levels_via_ffmpeg(path: &Path) -> Option<Vec<f32>> {
       };
       pending.extend_from_slice(&buffer[..read]);
       let usable = pending.len() - pending.len() % 4;
-      for sample in pending[..usable].chunks_exact(4) {
+      for sample in pending[..usable].as_chunks::<4>().0 {
         levels.push(f32::from_le_bytes([
           sample[0], sample[1], sample[2], sample[3],
         ]));
