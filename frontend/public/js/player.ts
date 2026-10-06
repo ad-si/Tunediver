@@ -311,6 +311,105 @@ function playFrom(clientX: number): void {
   if (audio.paused) setPlayingState("playing")
 }
 
+// --- Channel mode -----------------------------------------------------------
+//
+// Left only, right only, or both summed to mono. The <audio> element can't do
+// any of that itself, so the track is routed through a small Web Audio graph:
+// split into its two channels, cross-mixed by four gains (one per
+// input→output pair), and merged back into a stereo pair.
+//
+// The graph is only built the first time a non-stereo mode is chosen. Routing
+// an element into an AudioContext is one-way — from then on it is heard only
+// through the context — so there's no reason to take that on (and depend on
+// the context being allowed to run) until someone actually wants it. Once
+// built, every new track is routed through it, and stereo is just the identity
+// mix.
+
+interface ChannelGraph {
+  context: AudioContext
+  // Every track connects here; upmixes a mono file to two channels so the
+  // splitter always sees a pair.
+  input: GainNode
+  // [left→left, right→left, left→right, right→right]
+  gains: GainNode[]
+  source: MediaElementAudioSourceNode | null
+  element: HTMLAudioElement | null
+}
+
+let channelGraph: ChannelGraph | null = null
+
+// Gains for each mode, in the order of ChannelGraph.gains.
+const CHANNEL_MIX: Record<ChannelMode, number[]> = {
+  stereo: [1, 0, 0, 1],
+  left: [1, 0, 1, 0],
+  right: [0, 1, 0, 1],
+  mono: [0.5, 0.5, 0.5, 0.5],
+}
+
+function buildChannelGraph(): ChannelGraph {
+  const context = new AudioContext()
+
+  const input = context.createGain()
+  input.channelCount = 2
+  input.channelCountMode = "explicit"
+  input.channelInterpretation = "speakers"
+
+  const splitter = context.createChannelSplitter(2)
+  const merger = context.createChannelMerger(2)
+  input.connect(splitter)
+
+  const gains: GainNode[] = []
+  for (let output = 0; output < 2; output++) {
+    for (let source = 0; source < 2; source++) {
+      const gain = context.createGain()
+      splitter.connect(gain, source)
+      gain.connect(merger, 0, output)
+      gains.push(gain)
+    }
+  }
+  merger.connect(context.destination)
+
+  return { context, input, gains, source: null, element: null }
+}
+
+// Send `a` through the graph, if there is one, detaching the previous track so
+// its source node can be collected.
+function routeThroughChannelGraph(a: HTMLAudioElement): void {
+  if (!channelGraph || channelGraph.element === a) return
+
+  if (channelGraph.source) channelGraph.source.disconnect()
+  const source = channelGraph.context.createMediaElementSource(a)
+  source.connect(channelGraph.input)
+  channelGraph.source = source
+  channelGraph.element = a
+}
+
+// Make store.channelMode audible. Runs from the store effect, so it's also
+// called once at startup, where stereo without a graph is left alone.
+function applyChannelMode(): void {
+  if (!channelGraph) {
+    if (store.channelMode === "stereo") return
+    channelGraph = buildChannelGraph()
+  }
+  routeThroughChannelGraph(audio)
+
+  const { context, gains } = channelGraph
+  const mix = CHANNEL_MIX[store.channelMode]
+  // A short glide rather than a jump, which would click mid-track.
+  gains.forEach((gain, i) => {
+    gain.gain.setTargetAtTime(mix[i], context.currentTime, 0.01)
+  })
+  resumeChannelGraph()
+}
+
+// Browsers start (and sometimes re-suspend) an AudioContext until a user
+// gesture lets it run; a suspended one would leave the track silent.
+function resumeChannelGraph(): void {
+  if (channelGraph && channelGraph.context.state !== "running") {
+    channelGraph.context.resume().catch(() => {})
+  }
+}
+
 // Shared interval handle: a 250 ms fallback that keeps the progress UI moving
 // even when `timeupdate` events are sparse. Only one audio plays at a time, so
 // a single handle suffices; it is cleared whenever any audio pauses or ends.
@@ -380,6 +479,13 @@ function initPlayer () {
         ["div#playModes",
           ["button#shuffle"],
           ["button#repeat"]
+        ],
+        // Which channels play. Clicking the lit button again returns to
+        // stereo, so there's no separate stereo button.
+        ["div#channelModes",
+          ["button#channelLeft", {"data-mode": "left"}, "L"],
+          ["button#channelMono", {"data-mode": "mono"}, "M"],
+          ["button#channelRight", {"data-mode": "right"}, "R"]
         ],
         ["span#time", "0:00"],
         ["div#nowPlaying",
@@ -529,6 +635,19 @@ function initPlayer () {
       })
     }
 
+    const channelModesEl = document.getElementById("channelModes")
+    if (channelModesEl) {
+      channelModesEl.addEventListener("click", (e: Event) => {
+        const button = (e.target as HTMLElement).closest("button")
+        const mode = button && button.getAttribute("data-mode") as ChannelMode
+        if (!mode) return
+        e.stopPropagation()
+        // The buttons' .active classes and titles follow store.channelMode via
+        // the effect in wireStoreEffects, which also applies the mix.
+        store.channelMode = store.channelMode === mode ? "stereo" : mode
+      })
+    }
+
     const muteEl = document.getElementById("mute")
     if (muteEl) {
       muteEl.addEventListener("click", () => mute(), false)
@@ -584,6 +703,7 @@ function initPlayer () {
 // keyboard, media keys, or a track ending).
 function setPlayingState(state: PlayState): void {
   if (state === "playing") {
+    resumeChannelGraph()
     audio.play()
   }
   else if (state === "paused") {

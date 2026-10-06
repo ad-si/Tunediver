@@ -36,7 +36,8 @@
    pill absorbs the spacing between its own buttons; the gap on #controls only
    separates the groups from each other and from the progress cluster. */
 #transport,
-#playModes {
+#playModes,
+#channelModes {
   display: flex;
   align-items: center;
   background-color: var(--bg-control-group);
@@ -56,6 +57,26 @@
   /* Widen the gap to the transport pill past the 6px flex gap on #controls,
      so the two groups don't read as one. */
   margin-left: 2px;
+}
+/* Same pill as #playModes; set apart from it the same way. */
+#channelModes {
+  gap: 2px;
+  padding: 3px;
+  margin-left: 2px;
+}
+/* Letters rather than icons: L / M / R say it more plainly than any glyph. */
+#channelModes button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  width: 24px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+#channelModes button.active {
+  color: var(--accent);
 }
 #play {
   height: 32px;
@@ -622,7 +643,8 @@
 @media (max-width: 880px) {
   /* Volume is adjustable via the OS / keyboard; the slider goes first. */
   #volume,
-  #loud {
+  #loud,
+  #channelModes {
     display: none;
   }
 }

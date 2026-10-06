@@ -138,6 +138,26 @@ function wireStoreEffects(): void {
     el.classList.toggle("one", store.repeatMode === "one")
     el.setAttribute("title", "Repeat: " + store.repeatMode)
   })
+
+  // Channel buttons: `.active` on the selected one (none for stereo), plus
+  // routing the audio to match.
+  effect(["channelMode"], () => {
+    const labels: Record<string, string> = {
+      left: "Left channel only",
+      mono: "Mix both channels to mono",
+      right: "Right channel only",
+    }
+    document.querySelectorAll<HTMLElement>("#channelModes button")
+      .forEach((el) => {
+        const mode = el.getAttribute("data-mode") || ""
+        const active = store.channelMode === mode
+        el.classList.toggle("active", active)
+        el.setAttribute(
+          "title", labels[mode] + (active ? " (click for stereo)" : "")
+        )
+      })
+    applyChannelMode()
+  })
 }
 
 // --- Global fuzzy search ---------------------------------------------------
@@ -594,6 +614,8 @@ function playSong(
 
     // Now replace the global audio instance
     audio = newAudio
+    // Keep a chosen left/right/mono mode across the track change.
+    routeThroughChannelGraph(newAudio)
 
     // Record the track being superseded, so shuffle's previous button can walk
     // back through what was actually played. Only real playback counts (the

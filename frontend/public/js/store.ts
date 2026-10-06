@@ -14,6 +14,9 @@
 
 type PlayState = "playing" | "paused"
 type RepeatMode = "off" | "all" | "one"
+// Which source channels reach the speakers. "left"/"right" play that channel
+// on both sides; "mono" sums the two.
+type ChannelMode = "stereo" | "left" | "right" | "mono"
 type Tab = "artists" | "songs" | "playlists" | "genres"
 
 // How an open playlist's tracks are ordered for display. "index" keeps the
@@ -59,6 +62,8 @@ interface AppState {
   shuffleEnabled: boolean
   // "off" stops at the end of the list; "all" wraps; "one" replays the track.
   repeatMode: RepeatMode
+  // Applied by the Web Audio graph in player.ts (see applyChannelMode).
+  channelMode: ChannelMode
 
   // --- View / navigation ---------------------------------------------------
 
@@ -128,6 +133,7 @@ const _store = createStore<AppState>({
   playState: "paused",
   shuffleEnabled: false,
   repeatMode: "off",
+  channelMode: "stereo",
   currentTab: "artists",
   currentPlaylistId: null,
   playlistSort: "added-desc",
