@@ -764,9 +764,14 @@ function playAdjacentSong(direction: 1 | -1): void {
   // the playlist that started playback.
   if (playlistId !== undefined && playlistIndex !== undefined) {
     ajax<Playlist>(`/playlists/${playlistId}`, (playlist) => {
-      const targetIdx = neighbourIndex(
-        playlistIndex, direction, playlist.tracks.length
-      )
+      // Skip over tracks whose file is missing. Bounded by the playlist length
+      // so repeat-all can't spin forever on a playlist with nothing playable.
+      const length = playlist.tracks.length
+      let targetIdx = neighbourIndex(playlistIndex, direction, length)
+      for (let steps = 1; targetIdx !== null && steps < length; steps++) {
+        if (playlist.tracks[targetIdx]?.available) break
+        targetIdx = neighbourIndex(targetIdx, direction, length)
+      }
       if (targetIdx === null) return
       const target = playlist.tracks[targetIdx]
       if (!target || !target.available) return
