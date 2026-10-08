@@ -182,6 +182,11 @@ fn init_schema(conn: &Conn) -> rusqlite::Result<()> {
   if !column_exists(conn, "playlist_tracks", "added_at")? {
     conn.execute("ALTER TABLE playlist_tracks ADD COLUMN added_at TEXT", [])?;
   }
+  // Migrate databases created before refs could pin one specific file among
+  // several sharing (artist, title). NULL means "unpinned".
+  if !column_exists(conn, "playlist_tracks", "slug")? {
+    conn.execute("ALTER TABLE playlist_tracks ADD COLUMN slug TEXT", [])?;
+  }
   // Migrate databases created before `playlists.sort_order` existed. Holds the
   // last-selected display sort for each playlist ("index" / "added-asc" /
   // "added-desc"); NULL means the client falls back to its default.
@@ -693,13 +698,14 @@ fn load_playlist_tracks(
   playlist_id: &str,
 ) -> rusqlite::Result<Vec<crate::TrackRef>> {
   let mut stmt = conn.prepare(
-    "SELECT artist, title, added_at FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+    "SELECT artist, title, added_at, slug FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
   )?;
   let rows = stmt.query_map(params![playlist_id], |r| {
     Ok(crate::TrackRef {
       artist: r.get(0)?,
       title: r.get(1)?,
       added_at: r.get(2)?,
+      slug: r.get(3)?,
     })
   })?;
   rows.collect()
@@ -730,9 +736,9 @@ pub fn save_playlists(
     )?;
     for (tpos, t) in p.tracks.iter().enumerate() {
       tx.execute(
-        "INSERT INTO playlist_tracks (playlist_id, position, artist, title, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![p.id, tpos as i64, t.artist, t.title, t.added_at],
+        "INSERT INTO playlist_tracks (playlist_id, position, artist, title, added_at, slug)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![p.id, tpos as i64, t.artist, t.title, t.added_at, t.slug],
       )?;
     }
   }
@@ -1185,6 +1191,7 @@ mod tests {
           artist: "Fred".to_string(),
           title: "Robot Poetry".to_string(),
           added_at: Some("2016-08-19T20:09:09Z".to_string()),
+          slug: Some("Robot Poetry (0badc0de)".to_string()),
         }],
         created_at: 5,
         updated_at: 6,
@@ -1198,11 +1205,13 @@ mod tests {
             artist: "A".to_string(),
             title: "One".to_string(),
             added_at: None,
+            slug: None,
           },
           crate::TrackRef {
             artist: "B".to_string(),
             title: "Two".to_string(),
             added_at: None,
+            slug: None,
           },
         ],
         created_at: 1,
@@ -1236,6 +1245,13 @@ mod tests {
     );
     assert_eq!(second.tracks[0].added_at, None);
 
+    // A file pin survives the round-trip; unpinned refs stay unpinned.
+    assert_eq!(
+      first.tracks[0].slug.as_deref(),
+      Some("Robot Poetry (0badc0de)")
+    );
+    assert_eq!(second.tracks[0].slug, None);
+
     // The per-playlist sort preference survives the round-trip, including the
     // `None` case (sort never changed).
     assert_eq!(first.sort_order.as_deref(), Some("added-asc"));
@@ -1255,6 +1271,7 @@ mod tests {
           artist: "X".to_string(),
           title: "Y".to_string(),
           added_at: None,
+          slug: None,
         }],
         created_at: 1,
         updated_at: 1,

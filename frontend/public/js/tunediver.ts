@@ -1580,6 +1580,12 @@ function addSongToPlaylist(
   const artist = song.track_artist || ""
   const title = song.title || ""
   if (!artist || !title) return
+  // A slug that differs from the title marks one of several files sharing
+  // this (artist, title); pin the ref to it so the playlist plays this copy.
+  const slug = song.slug ? decodeURIComponent(song.slug) : ""
+  const body: TrackRefInput = slug && slug !== title
+    ? { artist, title, slug }
+    : { artist, title }
 
   const flashAnchor = (text: string): void => {
     $("addToPlaylistBubble").style.display = "none"
@@ -1593,7 +1599,7 @@ function addSongToPlaylist(
   ajaxMutate<Playlist>(
     "POST",
     `/playlists/${playlistId}/tracks`,
-    { artist, title },
+    body,
     () => {
       invalidateSearchCatalog()
       flashAnchor("Added!")

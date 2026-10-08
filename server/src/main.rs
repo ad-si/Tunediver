@@ -852,6 +852,12 @@ struct TrackRef {
   // known timestamp.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   added_at: Option<String>,
+  // Pins the ref to one specific file when several share the same (artist,
+  // title): the track's decoded slug, e.g. "Sway (7279dc95)". `None` resolves
+  // to the first (artist, title) match as before. A pin that no longer matches
+  // (file moved, or the collision went away) also falls back to that match.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  slug: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2496,6 +2502,17 @@ struct TrackRefInput {
   title: String,
   #[serde(default)]
   added_at: Option<String>,
+  #[serde(default)]
+  slug: Option<String>,
+}
+
+// Normalize an optional pin from client input: blank means "no pin".
+fn input_slug(slug: &Option<String>) -> Option<String> {
+  slug
+    .as_deref()
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .map(str::to_string)
 }
 
 fn summarize(
@@ -2519,43 +2536,50 @@ fn summarize(
 }
 
 fn hydrate(playlist: &Playlist, catalog: &Catalog) -> PlaylistDetail {
-  let tracks =
-    playlist
-      .tracks
-      .iter()
-      .map(|tr| {
-        match catalog.tracks.iter().find(|t| {
+  let tracks = playlist
+    .tracks
+    .iter()
+    .map(|tr| {
+      let pinned = tr.slug.as_ref().and_then(|slug| {
+        catalog
+          .tracks
+          .iter()
+          .find(|t| &t.slug == slug && artists_match(&t.artists, &tr.artist))
+      });
+      match pinned.or_else(|| {
+        catalog.tracks.iter().find(|t| {
           t.title == tr.title && artists_match(&t.artists, &tr.artist)
-        }) {
-          Some(t) => PlaylistTrack {
-            artist: tr.artist.clone(),
-            title: tr.title.clone(),
-            available: true,
-            slug: encode(&t.slug),
-            src: format!(
-              "/api/{}/{}",
-              encode(primary_artist(&t.artists)),
-              encode(&t.slug)
-            ),
-            artist_slug: encode(primary_artist(&t.artists)),
-            track_artist: artist_credit(&t.artists),
-            track_artists: t.artists.clone(),
-            added_at: tr.added_at.clone(),
-          },
-          None => PlaylistTrack {
-            artist: tr.artist.clone(),
-            title: tr.title.clone(),
-            available: false,
-            slug: String::new(),
-            src: String::new(),
-            artist_slug: encode(primary_artist(&split_artists(&tr.artist))),
-            track_artist: tr.artist.clone(),
-            track_artists: split_artists(&tr.artist),
-            added_at: tr.added_at.clone(),
-          },
-        }
-      })
-      .collect();
+        })
+      }) {
+        Some(t) => PlaylistTrack {
+          artist: tr.artist.clone(),
+          title: tr.title.clone(),
+          available: true,
+          slug: encode(&t.slug),
+          src: format!(
+            "/api/{}/{}",
+            encode(primary_artist(&t.artists)),
+            encode(&t.slug)
+          ),
+          artist_slug: encode(primary_artist(&t.artists)),
+          track_artist: artist_credit(&t.artists),
+          track_artists: t.artists.clone(),
+          added_at: tr.added_at.clone(),
+        },
+        None => PlaylistTrack {
+          artist: tr.artist.clone(),
+          title: tr.title.clone(),
+          available: false,
+          slug: String::new(),
+          src: String::new(),
+          artist_slug: encode(primary_artist(&split_artists(&tr.artist))),
+          track_artist: tr.artist.clone(),
+          track_artists: split_artists(&tr.artist),
+          added_at: tr.added_at.clone(),
+        },
+      }
+    })
+    .collect();
 
   PlaylistDetail {
     id: playlist.id.clone(),
@@ -2731,16 +2755,20 @@ fn add_playlist_track(
     .iter_mut()
     .find(|p| p.id == id)
     .ok_or(Status::NotFound)?;
+  // Distinct pinned copies of the same (artist, title) may coexist; the same
+  // copy (or the same unpinned ref) twice is a conflict.
+  let slug = input_slug(&input.slug);
   if playlist
     .tracks
     .iter()
-    .any(|t| t.artist == artist && t.title == title)
+    .any(|t| t.artist == artist && t.title == title && t.slug == slug)
   {
     return Err(Status::Conflict);
   }
   playlist.tracks.push(TrackRef {
     artist: artist.to_string(),
     title: title.to_string(),
+    slug,
     added_at: Some(
       input
         .added_at
@@ -2795,6 +2823,7 @@ fn reorder_playlist_tracks(
     .into_inner()
     .into_iter()
     .map(|t| TrackRef {
+      slug: input_slug(&t.slug),
       artist: t.artist,
       title: t.title,
       added_at: t.added_at,
@@ -3323,6 +3352,50 @@ mod tests {
       let found = catalog.find_track("Herbie Hancock", &slug).unwrap();
       assert_eq!(found.id, id);
     }
+  }
+
+  #[test]
+  fn hydrate_honours_pins_and_falls_back() {
+    let track = |id, path: &str| Track {
+      id,
+      artists: split_artists("Hal Leonard"),
+      title: "Sway".to_string(),
+      genres: Vec::new(),
+      year: None,
+      release_date: None,
+      path: PathBuf::from(path),
+      slug: String::new(),
+    };
+    let mut tracks = vec![track(0, "/a.mp3"), track(1, "/b.mp3")];
+    assign_track_slugs(&mut tracks);
+    let pinned_slug = tracks[1].slug.clone();
+    let catalog = Catalog { tracks };
+    let tref = |slug: Option<&str>| TrackRef {
+      artist: "Hal Leonard".to_string(),
+      title: "Sway".to_string(),
+      added_at: None,
+      slug: slug.map(str::to_string),
+    };
+    let playlist = Playlist {
+      id: "p".to_string(),
+      name: "P".to_string(),
+      tracks: vec![
+        tref(Some(&pinned_slug)),
+        tref(None),
+        tref(Some("Sway (deadbeef)")),
+      ],
+      created_at: 0,
+      updated_at: 0,
+      sort_order: None,
+    };
+    let detail = hydrate(&playlist, &catalog);
+    let first_slug = encode(&catalog.tracks[0].slug);
+    // The pin selects the second copy, not the first (artist, title) match.
+    assert_eq!(detail.tracks[0].slug, encode(&pinned_slug));
+    // Unpinned and stale pins resolve to the first match, still available.
+    assert_eq!(detail.tracks[1].slug, first_slug);
+    assert!(detail.tracks[2].available);
+    assert_eq!(detail.tracks[2].slug, first_slug);
   }
 
   #[test]

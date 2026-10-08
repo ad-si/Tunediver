@@ -121,6 +121,14 @@ type PlaylistTrack = {
   added_at?: string
 }
 
+// Body of `POST /api/playlists/<id>/tracks`. `slug` pins the ref to one file
+// when several share the same (artist, title).
+type TrackRefInput = {
+  artist: string
+  title: string
+  slug?: string
+}
+
 type Playlist = {
   id: string
   name: string
