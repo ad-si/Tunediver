@@ -2880,6 +2880,10 @@ const printObj = {
         if (target.classList.contains("remove")) {
           e.preventDefault()
           e.stopPropagation()
+          const label = songLabel(track.track_artist, track.title)
+          if (!confirm(`Remove "${label}" from playlist "${playlist.name}"?`)) {
+            return
+          }
           removePlaylistTrack(playlist.id, idx)
           return
         }
