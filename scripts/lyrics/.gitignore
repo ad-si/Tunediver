@@ -1,0 +1,4 @@
+node_modules/
+
+# Fetched lyrics and lookup results (copyrighted text, never commit)
+lyrics-cache/

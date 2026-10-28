@@ -1,0 +1,23 @@
+{
+  "name": "tunediver-lyrics",
+  "version": "0.0.0",
+  "description": "Fill in missing lyrics for a Tunediver playlist from LRCLIB and Genius.",
+  "author": "Adrian Sieber",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "node-taglib-sharp": "^6.0.3",
+    "playwright-core": "^1.64.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
